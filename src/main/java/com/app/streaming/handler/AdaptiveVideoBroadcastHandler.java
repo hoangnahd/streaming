@@ -154,7 +154,7 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
 
         // Feed the chunk into the FFmpeg engine to be downscaled for the low-res pool!
         if(transcoder != null) {
-            transcoder.feedRawHighChunk(bytes);
+            transcoder.feedHighRawChunk(bytes);
         }
     }
 

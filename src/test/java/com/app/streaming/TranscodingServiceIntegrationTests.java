@@ -46,10 +46,10 @@ public class TranscodingServiceIntegrationTests {
         System.out.println("[Feed] Starting feed");
 
         try (InputStream is = Files.newInputStream(videoPath)) {
-            byte[] buffer = new byte[128 * 1024];
+            byte[] buffer = new byte[64 * 1024];
             int n;
             while ((n = is.read(buffer)) != -1) {
-                transcodingService.feedRawHighChunk(Arrays.copyOf(buffer, n));
+                transcodingService.feedHighRawChunk(Arrays.copyOf(buffer, n));
             }
         }
 

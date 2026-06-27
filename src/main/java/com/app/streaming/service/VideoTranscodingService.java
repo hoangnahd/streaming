@@ -9,10 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.WebSocketSession;
 
-import java.io.ByteArrayOutputStream;
-import java.io.OutputStream;
-import java.io.PipedInputStream;
-import java.io.PipedOutputStream;
+import java.io.*;
 import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -45,89 +42,75 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class VideoTranscodingService {
     // Data pipeline
-    private static final int FIRST_CHUNK_SIZE = 65_536; // 64KB — matches probesize, covers WebM header
     private PipedOutputStream cameraInputPipe;
     private PipedInputStream readInputStream;
-    private List<WebSocketSession> lowResViewers;
-
-    // Accumulates bytes until we have enough for the first chunk
-    private final ByteArrayOutputStream firstChunkBuffer = new ByteArrayOutputStream();
+    private List<WebSocketSession> lowResViewer;
+    // Buffer first frame
+    private ByteArrayOutputStream firstChunkBuffered = new ByteArrayOutputStream();
+    private static final int FIRST_CHUNK_SIZE = 65_536;
     private volatile boolean firstChunkSent = false;
+    private CountDownLatch grabberLatch = new CountDownLatch(1);
 
-    public VideoTranscodingService(List<WebSocketSession> lowResViewers) throws Exception {
-        this.lowResViewers = lowResViewers;
-        // Initialize pipeline
+    // Initialize non-parameterized constructor
+    public VideoTranscodingService(List<WebSocketSession> lowResViewer) throws Exception {
         this.cameraInputPipe = new PipedOutputStream();
-        this.readInputStream = new PipedInputStream(this.cameraInputPipe, 128 * 1024 * 1024);
+        this.readInputStream = new PipedInputStream(cameraInputPipe, 32*1024*1024);
+        this.lowResViewer = lowResViewer;
+    }
+    // Feed raw chunk to data pipeline
+    public void feedHighRawChunk(byte[] chunk) throws NullPointerException, IOException {
+
+        if(!firstChunkSent) {
+            firstChunkBuffered.write(chunk);
+            if(firstChunkBuffered.size() >= FIRST_CHUNK_SIZE) {
+                // Write first chunk buffered to camera input pipe
+                cameraInputPipe.write(firstChunkBuffered.toByteArray());
+                cameraInputPipe.flush();
+                firstChunkSent = true;
+
+                System.out.println("First chunk written, signalling grabber...");
+                firstChunkBuffered.reset(); // Free the mem
+                // Count down to unlatch
+                grabberLatch.countDown();
+            }
+        } else {
+            cameraInputPipe.write(chunk);
+        }
+    }
+    // Broadcast to viewer
+    public void broadcast(byte[] chunk) throws IOException {
+        for(WebSocketSession viewer : lowResViewer) {
+            viewer.sendMessage(new BinaryMessage(chunk));
+        }
     }
 
-    private final CountDownLatch grabberStarted = new CountDownLatch(1);
-
-    // Call this when the camera stream ends
+    // Signal end of stream
     public void signalEndOfStream() {
         try {
             cameraInputPipe.close();
         } catch (Exception e) {
-            System.err.println("Error closing pipe: " + e.getMessage());
+            System.out.println("Error while closing camera pipe input");
         }
     }
-
-    // ── feedRawHighChunk — buffers until first chunk is ready ────────────────────
-    public void feedRawHighChunk(byte[] chunk) {
-        try {
-            if (!firstChunkSent) {
-                firstChunkBuffer.write(chunk);
-
-                if (firstChunkBuffer.size() >= FIRST_CHUNK_SIZE) {
-                    // Enough header data accumulated — write to pipe and signal grabber
-                    cameraInputPipe.write(firstChunkBuffer.toByteArray());
-                    cameraInputPipe.flush();
-                    firstChunkSent = true;
-                    firstChunkBuffer.reset(); // free memory
-
-                    System.out.println("[Feed] First chunk written, signalling grabber...");
-                    grabberStarted.countDown(); // grabber.start() can now find data in pipe
-                }
-            } else {
-                // Normal path — pipe directly
-                cameraInputPipe.write(chunk);
-            }
-
-        } catch (Exception e) {
-            System.err.println("Error feeding high chunk: " + e.getMessage());
-        }
-    }
-
-    public void broadCastLowResViewer(byte[] chunk) {
-        BinaryMessage message = new BinaryMessage(ByteBuffer.wrap(chunk));
-        try {
-            for (WebSocketSession lowResViewer : lowResViewers) {
-                lowResViewer.sendMessage(message);
-            }
-        } catch (Exception e) {
-            System.err.println("Error during broadcast to low res viewer: " + e.getMessage());
-        }
-    }
-
-    public void startTranscodingThread(CountDownLatch latch) {
+    // Start transcoding thread
+    public void startTranscodingThread(CountDownLatch transcodeLatch) {
         Thread transcoderThread = new Thread(() -> {
+            // Create grabber
             FFmpegFrameGrabber grabber = null;
             FFmpegFrameRecorder recorder = null;
             try {
                 FFmpegLogCallback.set();
-
+                // Grabber
                 grabber = new FFmpegFrameGrabber(readInputStream);
+                // Set attribute to grabber
                 grabber.setFormat("matroska");
-                grabber.setOption("probesize", "65536");   // matches FIRST_CHUNK_SIZE
+                grabber.setOption("probesize", "65536");
                 grabber.setOption("analyzeduration", "0");
-
                 // Wait until producer has written at least the WebM header into the pipe
-                System.out.println("[Transcoder] Waiting for first chunk...");
-                grabberStarted.await(); // ← blocks here, not before
-                System.out.println("[Transcoder] First chunk ready, calling grabber.start()...");
-
-                grabber.start(); // now guaranteed to find data in pipe — no hang
-                System.out.println("[Transcoder] grabber.start() returned");
+                System.out.println("Waiting for first chunk...");
+                grabberLatch.await();
+                System.out.println("First chunk ready, calling grabber.start()...");
+                grabber.start();
 
                 int audioChannels = grabber.getAudioChannels() > 0 ? grabber.getAudioChannels() : 2;
                 int sampleRate = grabber.getSampleRate() > 0 ? grabber.getSampleRate() : 48000;
@@ -135,25 +118,22 @@ public class VideoTranscodingService {
 
                 System.out.printf("[Grabber] ch=%d sr=%d fps=%.2f%n",
                         audioChannels, sampleRate, frameRate);
-
-                // ── RECORDER ─────────────────────────────────────────────
+                // Recorder
                 OutputStream customOutputStream = new OutputStream() {
                     @Override
-                    public void write(int b) {
+                    public void write(int b) throws IOException {
                         write(new byte[]{(byte) b}, 0, 1);
                     }
 
                     @Override
-                    public void write(byte[] b, int off, int len) {
+                    public void write(byte[] b, int off, int len) throws IOException {
                         byte[] chunk = new byte[len];
                         System.arraycopy(b, off, chunk, 0, len);
-                        broadCastLowResViewer(chunk);
+                        broadcast(chunk);
                     }
                 };
 
-                recorder = new FFmpegFrameRecorder(
-                        customOutputStream, 1280, 720, audioChannels
-                );
+                recorder = new FFmpegFrameRecorder(customOutputStream, 1280, 720, audioChannels);
                 recorder.setFormat("webm");
                 recorder.setOption("f", "webm");
                 recorder.setVideoCodec(avcodec.AV_CODEC_ID_VP9);
@@ -170,6 +150,7 @@ public class VideoTranscodingService {
 
                 // ── DECODE LOOP ───────────────────────────────────────────
                 System.out.println("[Transcoder] Starting decode loop");
+
                 Frame frame;
                 int frameCount = 0;
                 int nullStreak = 0;
@@ -181,37 +162,45 @@ public class VideoTranscodingService {
                         nullStreak++;
                         continue;
                     }
+
                     nullStreak = 0;
 
                     if (frame.image != null || frame.samples != null) {
                         recorder.record(frame);
                         frameCount++;
-                        if (frameCount % 30 == 0) {
+                        if(frameCount % 30 == 0) {
                             System.out.printf("[Transcoder] %d frames%n", frameCount);
                         }
                     }
                 }
-
-                System.out.printf("[Transcoder] Done — %d frames%n", frameCount);
-
-            } catch (Exception e) {
-                System.err.println("[Transcoder] FATAL: " + e.getMessage());
+                System.out.println("nullStreak: " + nullStreak);
+                System.out.println("Transcoder done | FrameCount: " + frameCount);
+            }
+            catch (Exception e) {
+                System.out.println("Error transcoding");
                 e.printStackTrace();
-            } finally {
+            }
+            finally {
+                // Stop grabber
                 try {
-                    if (recorder != null) recorder.stop();
-                } catch (Exception ignored) {
-                }
+                    if(grabber != null) grabber.stop();
+                } catch (Exception ignore) {}
+                // Stop recorder
                 try {
-                    if (grabber != null) grabber.stop();
-                } catch (Exception ignored) {
-                }
-                latch.countDown();
-                System.out.println("[Transcoder] Latch released.");
+                    if(recorder != null) recorder.stop();
+                } catch (Exception ignore) {}
+                // Release transcoder latch
+                transcodeLatch.countDown();
             }
         });
 
         transcoderThread.setName("FFMPEG-Transcoder-Thread");
         transcoderThread.start();
+
+
     }
+
+
+
+
 }
