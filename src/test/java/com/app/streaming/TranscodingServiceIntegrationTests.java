@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -25,7 +26,7 @@ public class TranscodingServiceIntegrationTests {
         // Setup low resolution viewer's session
         WebSocketSession mockMobileViewer = mock(WebSocketSession.class);
         when(mockMobileViewer.isOpen()).thenReturn(true);
-        List<WebSocketSession> lowResViewer = Collections.singletonList(mockMobileViewer);
+        CopyOnWriteArrayList<WebSocketSession> lowResViewer = new CopyOnWriteArrayList<>(Arrays.asList(mockMobileViewer));
 
         CountDownLatch ffmpegOutputLatch = new CountDownLatch(1);
         doAnswer(invocation -> {
@@ -39,8 +40,7 @@ public class TranscodingServiceIntegrationTests {
         Path videoPath = Path.of("src/test/resources/18800380-uhd_3840_2160_30fps.webm");
         assertThat(videoPath).exists().isReadable();
 
-        CountDownLatch transcodeLatch = new CountDownLatch(1);
-        transcodingService.startTranscodingThread(transcodeLatch);
+        CountDownLatch transcodeLatch = transcodingService.startTranscodingThread();
 
         // No awaitGrabberReady() needed — feedRawHighChunk handles the sync internally
         System.out.println("[Feed] Starting feed");

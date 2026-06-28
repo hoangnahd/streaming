@@ -12,8 +12,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
     // Session lists
 //    private List<WebSocketSession> sessions = new CopyOnWriteArrayList<>();
-    private List<WebSocketSession> highResViewer = new CopyOnWriteArrayList<WebSocketSession>();
-    private List<WebSocketSession> lowResViewer = new CopyOnWriteArrayList<WebSocketSession>();
+    private CopyOnWriteArrayList<WebSocketSession> highResViewer = new CopyOnWriteArrayList<WebSocketSession>();
+    private CopyOnWriteArrayList<WebSocketSession> lowResViewer = new CopyOnWriteArrayList<WebSocketSession>();
 
     // Key
     private static final String ROLE_KEY = "ROLE";
