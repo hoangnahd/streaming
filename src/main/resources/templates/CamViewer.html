@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Stream Broadcaster MVP Test</title>
+    <style>
+        :root {
+            --bg-main: #0b0f19;
+            --bg-card: #131c2e;
+            --bg-input: #1e293b;
+            --text-main: #f1f5f9;
+            --text-muted: #64748b;
+            --accent-primary: #2563eb;
+            --accent-primary-hover: #1d4ed8;
+            --accent-success: #10b981;
+            --accent-danger: #ef4444;
+            --accent-danger-hover: #dc2626;
+            --border-color: rgba(255, 255, 255, 0.06);
+            --radius-lg: 12px;
+            --radius-md: 8px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            padding: 2.5rem;
+            letter-spacing: -0.01em;
+        }
+
+        header {
+            margin-bottom: 2.5rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 1.5rem;
+        }
+
+        header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            color: #ffffff;
+        }
+
+        header p {
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            margin-top: 0.35rem;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2rem;
+            flex: 1;
+        }
+
+        @media (min-width: 1024px) {
+            .dashboard {
+                grid-template-columns: 420px 1fr;
+            }
+        }
+
+        .panel {
+            background-color: var(--bg-card);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-color);
+            padding: 1.75rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.75rem;
+        }
+
+        .section-block {
+            display: flex;
+            flex-direction: column;
+            gap: 0.875rem;
+        }
+
+        .section-title {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        label {
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: #94a3b8;
+        }
+
+        input[type="text"] {
+            background-color: var(--bg-input);
+            border: 1px solid transparent;
+            border-radius: var(--radius-md);
+            color: var(--text-main);
+            padding: 0.625rem 0.875rem;
+            font-size: 0.875rem;
+            transition: all 0.2s ease;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+        }
+
+        .btn-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+        }
+
+        .btn-group-single {
+            display: grid;
+            grid-template-columns: 1fr;
+        }
+
+        button {
+            cursor: pointer;
+            padding: 0.625rem 1rem;
+            border-radius: var(--radius-md);
+            font-weight: 500;
+            font-size: 0.875rem;
+            border: none;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        button:disabled {
+            opacity: 0.25;
+            cursor: not-allowed;
+            filter: grayscale(1);
+        }
+
+        .btn-primary {
+            background-color: var(--accent-primary);
+            color: white;
+        }
+
+        .btn-primary:not(:disabled):hover {
+            background-color: var(--accent-primary-hover);
+        }
+
+        .btn-danger {
+            background-color: rgba(239, 68, 68, 0.1);
+            color: var(--accent-danger);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .btn-danger:not(:disabled):hover {
+            background-color: var(--accent-danger);
+            color: white;
+            border-color: transparent;
+        }
+
+        .btn-secondary {
+            background-color: #334155;
+            color: #f1f5f9;
+        }
+
+        .btn-secondary:not(:disabled):hover {
+            background-color: #475569;
+        }
+
+        .status-container {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            background-color: rgba(0, 0, 0, 0.15);
+            padding: 1rem;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-color);
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.825rem;
+        }
+
+        .status-label {
+            color: #94a3b8;
+        }
+
+        .badge {
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .badge-disconnected {
+            background-color: rgba(239, 68, 68, 0.1);
+            color: var(--accent-danger);
+        }
+
+        .badge-connected {
+            background-color: rgba(16, 185, 129, 0.1);
+            color: var(--accent-success);
+        }
+
+        .badge-idle {
+            background-color: #1e293b;
+            color: #94a3b8;
+        }
+
+        .badge-streaming {
+            background-color: rgba(239, 68, 68, 0.15);
+            color: var(--accent-danger);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.4; }
+            100% { opacity: 1; }
+        }
+
+        .terminal {
+            background-color: #070a12;
+            border-radius: var(--radius-md);
+            padding: 0.875rem;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.75rem;
+            color: #a7f3d0;
+            height: 160px;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+
+        .terminal-line {
+            line-height: 1.5;
+        }
+
+        .terminal-time {
+            color: #475569;
+            margin-right: 0.5rem;
+        }
+
+        .video-container {
+            position: relative;
+            background-color: #070a12;
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+            aspect-ratio: 16 / 9;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        .video-placeholder {
+            position: absolute;
+            color: var(--text-muted);
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            align-items: center;
+            font-size: 0.875rem;
+        }
+
+        .video-overlay {
+            position: absolute;
+            top: 1.25rem;
+            left: 1.25rem;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Pipeline Validation Node</h1>
+    <p>Isolated device staging verification and binary stream transport mapping.</p>
+</header>
+
+<div class="dashboard">
+    <div class="panel">
+
+        <div class="section-block">
+            <h2 class="section-title">1. Hardware Staging</h2>
+            <div class="btn-group-single">
+                <button id="btnToggleCamera" class="btn-secondary">Initialize Camera Feed</button>
+            </div>
+        </div>
+
+        <div class="section-block">
+            <h2 class="section-title">2. Network Gateway</h2>
+            <div class="form-group">
+                <label for="wsUrl">Target Endpoint Address</label>
+                <input type="text" id="wsUrl" value="wss://localhost:8443/video-stream" autocomplete="off">
+            </div>
+            <div class="btn-group">
+                <button id="btnConnect" class="btn-primary" disabled>Connect WS</button>
+                <button id="btnDisconnect" class="btn-danger" disabled>Disconnect</button>
+            </div>
+        </div>
+
+        <div class="section-block">
+            <h2 class="section-title">3. Transmission Control</h2>
+            <div class="btn-group">
+                <button id="btnStartStream" class="btn-primary" disabled>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
+                    Start Stream
+                </button>
+                <button id="btnStopStream" class="btn-danger" disabled>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                    Stop Stream
+                </button>
+            </div>
+        </div>
+
+        <div class="section-block">
+            <h2 class="section-title">Telemetry & Systems</h2>
+            <div class="status-container">
+                <div class="status-item">
+                    <span class="status-label">Network Pipeline:</span>
+                    <span id="netStatus" class="badge badge-disconnected">Disconnected</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Transport State:</span>
+                    <span id="streamStatus" class="badge badge-idle">Idle</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Packets Mutated:</span>
+                    <span id="chunkCount" style="font-weight: 500; color: #ffffff;">0</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="section-block">
+            <h2 class="section-title">Log Monitoring</h2>
+            <div id="terminal" class="terminal">
+                <div class="terminal-line"><span class="terminal-time">[SYS]</span>Staging environment standing by. Open camera framework to begin.</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel" style="justify-content: center; background-color: #0b0f19; padding: 0; overflow: hidden;">
+        <div class="video-container">
+            <video id="preview" autoplay playsinline muted></video>
+            <div id="videoPlaceholder" class="video-placeholder">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7a2 2 0 0 0-2.45-1.45L16 7V5a2 2 0 0 0-2-2H2a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2l4.55 1.45A2 2 0 0 0 23 17V7z"/></svg>
+                <p style="font-weight: 400;">Camera device offline</p>
+            </div>
+            <div class="video-overlay">
+                <span id="videoBadge" class="badge badge-idle" style="display: none; background-color: rgba(15, 23, 42, 0.7); backdrop-filter: blur(4px); border: 1px solid rgba(255,255,255,0.05);">Staging Feed</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const wsUrlInput = document.getElementById('wsUrl');
+    const btnToggleCamera = document.getElementById('btnToggleCamera');
+    const btnConnect = document.getElementById('btnConnect');
+    const btnDisconnect = document.getElementById('btnDisconnect');
+    const btnStartStream = document.getElementById('btnStartStream');
+    const btnStopStream = document.getElementById('btnStopStream');
+    const netStatus = document.getElementById('netStatus');
+    const streamStatus = document.getElementById('streamStatus');
+    const chunkCountEl = document.getElementById('chunkCount');
+    const terminal = document.getElementById('terminal');
+    const previewVideo = document.getElementById('preview');
+    const videoPlaceholder = document.getElementById('videoPlaceholder');
+    const videoBadge = document.getElementById('videoBadge');
+
+    let ws = null;
+    let mediaStream = null;
+    let mediaRecorder = null;
+    let chunksSent = 0;
+
+    function log(message, type = 'info') {
+        const time = new Date().toLocaleTimeString([], { hour12: false });
+        const line = document.createElement('div');
+        line.className = 'terminal-line';
+
+        let prefix = `[${time}] `;
+        if (type === 'error') {
+            line.style.color = '#f87171';
+            prefix += 'ERR: ';
+        } else if (type === 'success') {
+            line.style.color = '#34d399';
+            prefix += 'OK: ';
+        } else {
+            line.style.color = '#94a3b8';
+        }
+
+        line.innerHTML = `<span class="terminal-time">${prefix}</span>${message}`;
+        terminal.appendChild(line);
+        terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    // Feature 1: Isolated Camera Hardware Activation
+    btnToggleCamera.addEventListener('click', async () => {
+        if (mediaStream) {
+            log('Tearing down existing hardware allocations.');
+            stopCameraHardware();
+            return;
+        }
+
+        log('Requesting localized peripheral permissions.');
+        try {
+            mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            previewVideo.srcObject = mediaStream;
+
+            videoPlaceholder.style.display = 'none';
+            videoBadge.style.display = 'inline-flex';
+            videoBadge.textContent = 'Staging Feed';
+
+            btnToggleCamera.textContent = 'Terminate Camera Feed';
+            btnToggleCamera.className = 'btn-danger';
+
+            btnConnect.disabled = false; // Allow step 2 once step 1 is validated
+            log('Staging layout active. Video capturing locally.', 'success');
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                btnStartStream.disabled = false;
+            }
+        } catch (err) {
+            log(`Hardware binding failed: ${err.message}`, 'error');
+            stopCameraHardware();
+        }
+    });
+
+    function stopCameraHardware() {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            stopStreamingTransmission();
+        }
+        if (mediaStream) {
+            mediaStream.getTracks().forEach(track => track.stop());
+            mediaStream = null;
+        }
+        previewVideo.srcObject = null;
+        videoPlaceholder.style.display = 'flex';
+        videoBadge.style.display = 'none';
+
+        btnToggleCamera.textContent = 'Initialize Camera Feed';
+        btnToggleCamera.className = 'btn-secondary';
+
+        btnStartStream.disabled = true;
+        log('Hardware framework unmounted.');
+    }
+
+    // Feature 2: Socket Pipeline Connection Layer
+    btnConnect.addEventListener('click', () => {
+        const url = wsUrlInput.value.trim();
+        if (!url) {
+            log('Target system address parameter null.', 'error');
+            return;
+        }
+
+        log(`Negotiating state layer connection to: ${url}`);
+        netStatus.textContent = 'Upgrading';
+        netStatus.className = 'badge';
+        netStatus.style.backgroundColor = 'rgba(234, 179, 8, 0.1)';
+        netStatus.style.color = '#f59e0b';
+        btnConnect.disabled = true;
+
+        try {
+            ws = new WebSocket(url);
+            ws.binaryType = 'arraybuffer'; // CRITICAL
+
+            ws.onopen = () => {
+                log('TCP pipeline established. Handshake accepted.', 'success');
+                netStatus.textContent = 'Connected';
+                netStatus.className = 'badge badge-connected';
+                netStatus.style.backgroundColor = '';
+                netStatus.style.color = '';
+
+                btnDisconnect.disabled = false;
+                if (mediaStream) {
+                    btnStartStream.disabled = false;
+                } else {
+                    log('Gateway open, awaiting primary hardware track activation.', 'info');
+                }
+            };
+
+            ws.onclose = (e) => {
+                log(`Socket connection dropped. Code: ${e.code}`);
+                resetNetworkUI();
+            };
+
+            ws.onerror = () => {
+                log('Asynchronous socket transport failure discovered.', 'error');
+            };
+
+        } catch (e) {
+            log(`Pipeline instantiation aborted: ${e.message}`, 'error');
+            resetNetworkUI();
+        }
+    });
+
+    btnDisconnect.addEventListener('click', () => {
+        if (ws) ws.close();
+    });
+
+    // Feature 3: Live Telemetry & Record Streaming Loop
+    btnStartStream.addEventListener('click', () => {
+        if (!mediaStream) {
+            log('Stream processing failure: Hardware staging offline.', 'error');
+            return;
+        }
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            log('Stream processing failure: Gateway connection offline.', 'error');
+            return;
+        }
+
+        log('Configuring payload chunk serialization parameters.');
+        let options = { mimeType: 'video/webm; codecs=vp8,opus' };
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+            options = { mimeType: 'video/webm' };
+        }
+
+        try {
+            mediaRecorder = new MediaRecorder(mediaStream, options);
+            chunksSent = 0;
+            chunkCountEl.textContent = chunksSent;
+
+            mediaRecorder.ondataavailable = async (event) => {
+                if (event.data && event.data.size > 0) {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        const timestamp = Date.now();
+                        const header = new ArrayBuffer(8);
+                        new DataView(header).setFloat64(0, timestamp);
+                        const videoBuf = await event.data.arrayBuffer();
+                        const combined = new Uint8Array(8 + videoBuf.byteLength);
+                        combined.set(new Uint8Array(header), 0);
+                        combined.set(new Uint8Array(videoBuf), 8);
+                        ws.send(combined.buffer);
+                        chunksSent++;
+                        chunkCountEl.textContent = chunksSent;
+                        console.log('SEND header bytes:', new Uint8Array(combined.buffer, 0, 8));
+                        console.log('SEND timestamp:', timestamp, new Date(timestamp).toISOString());
+                    }
+                }
+            };
+
+            mediaRecorder.start(100);
+
+            streamStatus.textContent = 'Streaming';
+            streamStatus.className = 'badge badge-streaming';
+            videoBadge.textContent = 'LIVE';
+            videoBadge.className = 'badge badge-streaming';
+
+            btnStartStream.disabled = true;
+            btnStopStream.disabled = false;
+            log('Binary stream packet dispatch pipeline running.', 'success');
+        } catch (e) {
+            log(`MediaRecorder initialization crashed: ${e.message}`, 'error');
+        }
+    });
+
+    btnStopStream.addEventListener('click', () => {
+        stopStreamingTransmission();
+    });
+
+    function stopStreamingTransmission() {
+        log('Halting packet extraction loops.');
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
+        }
+        streamStatus.textContent = 'Idle';
+        streamStatus.className = 'badge badge-idle';
+
+        if (mediaStream) {
+            videoBadge.textContent = 'Staging Feed';
+            videoBadge.className = 'badge badge-idle';
+            videoBadge.style.backgroundColor = 'rgba(15, 23, 42, 0.7)';
+        }
+
+        btnStopStream.disabled = true;
+        btnStartStream.disabled = (ws && ws.readyState === WebSocket.OPEN && mediaStream) ? false : true;
+        log('Binary stream disconnected. Hardware track preserved.');
+    }
+
+    function resetNetworkUI() {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            stopStreamingTransmission();
+        }
+        netStatus.textContent = 'Disconnected';
+        netStatus.className = 'badge badge-disconnected';
+        btnConnect.disabled = false;
+        btnDisconnect.disabled = true;
+        btnStartStream.disabled = true;
+        ws = null;
+    }
+</script>
+</body>
+</html>
