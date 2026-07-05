@@ -3,6 +3,8 @@ package com.app.streaming.handler;
 import com.app.streaming.broadcast.BroadcastSink;
 import com.app.streaming.session.SessionRegistry;
 import com.app.streaming.session.StreamingClient;
+import com.app.streaming.transcoder.KeyframeDetector;
+
 import org.jspecify.annotations.NonNull;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.BinaryMessage;
@@ -12,6 +14,8 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.BinaryWebSocketHandler;
 
 import java.nio.ByteBuffer;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
 @Component
@@ -25,6 +29,10 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
     private final SessionRegistry sessionRegistry;
     private final BroadcastSink broadcastSink;
     // private final TranscoderFactory transcoderFactory;
+
+    // One detector per camera session (keyed by camera sessionId)
+    private final Map<String, KeyframeDetector> detectors = new ConcurrentHashMap<>();
+
 
 
     public AdaptiveVideoBroadcastHandler(SessionRegistry sessionRegistry, BroadcastSink broadcastSink) {
@@ -65,8 +73,15 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
             newClient.setInitHeaderSegment(null);
             newClient.setLatestKeyframeCluster(null);
 
+            // 1. Create a fresh detector; its listener updates StreamingClient
+            KeyframeDetector detector = new KeyframeDetector(clusterBytes -> {
+                newClient.setLatestKeyframeCluster(clusterBytes);
+            });
+            detectors.put(newClient.getSessionId(), detector);
+
             broadcastSink.sendTextMessage(session.getId(), new TextMessage(STREAM_RESTARTED_SIGNAL));
             log.info("[Handler] Camera connected successfully: " + session.getId());
+            
         } else {
             log.info("[Handler] Viewer joined stream: " + session.getId());
             broadcastSink.sendInitHeaders(session);
@@ -96,9 +111,22 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
         if(client.getInitHeaderSegment() == null) {
             client.setInitHeaderSegment(raw);
         }
-        if(isKeyframeCluster(raw)) {
-            client.setLatestKeyframeCluster(raw);
+        // if(isKeyframeCluster(raw)) {
+        //     client.setLatestKeyframeCluster(raw);
+        // }
+        // 2. Feed into detector (cheap — just boundary scan + optional accumulation)
+        // Feed ONLY pure WebM bytes (strip 8-byte timestamp) into detector
+        KeyframeDetector detector = detectors.get(session.getId());
+        if (detector != null) {
+            try {
+                detector.feed(raw, 8); // ← pass offset, don't allocate a copy
+            } catch (Exception e) {
+                log.warning("[Handler] KeyframeDetector error: " + e.getMessage());
+            }
         }
+
+        // 3. Broadcast ALWAYS runs, even if detector failed
+        broadcastSink.sendBinaryMessage(session.getId(), new BinaryMessage(raw));
 
         // 4. Route based on profile
         // if ("HIGH".equals(client.getProfile())) {
@@ -109,7 +137,7 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
         //     transcoder.feedPacket(packet);
         // } else {
             // Direct broadcast path — forward raw bytes including timestamp
-        broadcastSink.sendBinaryMessage(session.getId(), new BinaryMessage(raw));
+        // broadcastSink.sendBinaryMessage(session.getId(), new BinaryMessage(raw));
         //}
     }
 
