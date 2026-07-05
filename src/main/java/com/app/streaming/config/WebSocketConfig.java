@@ -11,9 +11,14 @@ import org.springframework.web.socket.server.standard.ServletServerContainerFact
 @EnableWebSocket
 @Configuration
 public class WebSocketConfig implements WebSocketConfigurer {
+    private final AdaptiveVideoBroadcastHandler handler;
+
+    public WebSocketConfig(AdaptiveVideoBroadcastHandler handler) {
+        this.handler = handler;
+    }
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry.addHandler(new AdaptiveVideoBroadcastHandler(), "video-stream")
+        registry.addHandler(handler, "/video-stream")
                 .setAllowedOrigins("*");
     }
     @Bean

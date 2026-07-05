@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Live Stream Viewer</title>
+    <style>
+        :root {
+            --bg-primary: #0f111a;
+            --bg-secondary: #1a1d2e;
+            --bg-tertiary: #22263f;
+            --accent: #00adb5;
+            --accent-hover: #007a80;
+            --text-main: #ffffff;
+            --text-muted: #a0aec0;
+            --danger: #ff4a4a;
+            --success: #4edf7a;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-main);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        h2 {
+            margin: 0 0 20px 0;
+            color: var(--accent);
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .dashboard-layout {
+            display: grid;
+            grid-template-columns: 1fr 380px;
+            gap: 20px;
+            width: 100%;
+            max-width: 1300px;
+            /* Limits layout to the viewport minus padding */
+            height: calc(100vh - 100px);
+            min-height: 500px;
+        }
+
+        @media (max-width: 950px) {
+            .dashboard-layout {
+                grid-template-columns: 1fr;
+                height: auto; /* Allow natural scrolling on small mobile screens */
+            }
+        }
+
+        .main-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            height: 100%;
+        }
+
+        .video-wrapper {
+            width: 100%;
+            background: #000000;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+            border: 1px solid var(--bg-tertiary);
+            /* Forces clean 16:9 cinematic scaling box */
+            aspect-ratio: 16 / 9;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* Preserves tracks without cropping or stretching */
+        }
+
+        .control-card {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid var(--bg-tertiary);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .input-group label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            font-weight: bold;
+        }
+
+        .url-input-wrapper {
+            display: flex;
+            gap: 10px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            background: var(--bg-primary);
+            border: 1px solid var(--bg-tertiary);
+            border-radius: 6px;
+            padding: 12px;
+            color: var(--text-main);
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            transition: border 0.2s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        button {
+            background-color: var(--accent);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 14px;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+            white-space: nowrap;
+        }
+
+        button:hover { background-color: var(--accent-hover); }
+        button:active { transform: scale(0.98); }
+        button:disabled {
+            background-color: var(--bg-tertiary);
+            color: var(--text-muted);
+            cursor: not-allowed;
+        }
+
+        .sidebar-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            height: 100%; /* Force sidebar to match dashboard height */
+            overflow: hidden; /* Prevent sidebar items from spilling out */
+        }
+
+        .telemetry-box {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid var(--bg-tertiary);
+            flex-shrink: 0; /* Stop the telemetry card from squishing */
+        }
+
+        .metric {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--success);
+            font-family: monospace;
+            margin-top: 5px;
+        }
+
+        .terminal-box {
+            background: #05070f;
+            border-radius: 12px;
+            border: 1px solid var(--bg-tertiary);
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden; /* Locks the header and container frame in place */
+        }
+
+        .terminal-header {
+            background: #141724;
+            padding: 12px 15px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--bg-tertiary);
+            display: flex;
+            justify-content: space-between;
+            flex-shrink: 0; /* Keep header from shrinking */
+        }
+
+        /* The true inner logging chamber */
+        .terminal-logs {
+            padding: 15px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            overflow-y: auto; /* Creates the targeted scrollbar here */
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            /* Custom scrollbar styling for a cleaner dark UI look */
+            scrollbar-width: thin;
+            scrollbar-color: var(--bg-tertiary) transparent;
+        }
+
+        /* Optional styling to make Chrome/Edge scrollbars match your dark theme */
+        .terminal-logs::-webkit-scrollbar {
+            width: 6px;
+        }
+        .terminal-logs::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .terminal-logs::-webkit-scrollbar-thumb {
+            background-color: var(--bg-tertiary);
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+
+<h2>Live Video Stream Receiver</h2>
+
+<div class="dashboard-layout">
+
+    <div class="main-panel">
+        <div class="video-wrapper">
+            <video id="livePlayer" controls autoplay playsinline muted></video>
+        </div>
+
+        <div class="control-card">
+            <div class="input-group">
+                <label for="wsUrl">WebSocket Gateway Target Address</label>
+                <div class="url-input-wrapper">
+                    <input type="text" id="wsUrl" value="wss://localhost:8443/video-stream?role=viewer" placeholder="wss://...">
+                    <button id="connectBtn" onclick="initViewer()">Connect Stream</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="sidebar-panel">
+        <div class="telemetry-box">
+            <div style="font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); font-weight: bold;">
+                End-to-End Latency
+            </div>
+            <div id="latencyDisplay" class="metric">-- ms</div>
+            <div id="statusText" style="margin-top: 8px; font-size: 13px; color: var(--text-muted);">Status: Idle</div>
+        </div>
+
+        <div class="terminal-box">
+            <div class="terminal-header">
+                <span>System Diagnostic Monitor</span>
+                <span style="cursor: pointer; color: var(--accent);" onclick="clearLogs()">Clear</span>
+            </div>
+            <div id="terminalLogs" class="terminal-logs">
+                <div class="log-entry info">System initialized. Awaiting secure proxy initialization loop...</div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    const statusText = document.getElementById('statusText');
+    const latencyDisplay = document.getElementById('latencyDisplay');
+    const videoElement = document.getElementById('livePlayer');
+    const terminalLogs = document.getElementById('terminalLogs');
+    const wsUrlInput = document.getElementById('wsUrl');
+    const connectBtn = document.getElementById('connectBtn');
+
+    let socket;
+    let mediaSource;
+    let sourceBuffer;
+    let queue = [];
+    let currentStreamUrl = null;
+    let reconnectTimer = null;
+    let frameNum = 0;
+
+    const RECONNECT_DELAY_MS = 2000;
+
+    function log(message, type = 'info') {
+        const entry = document.createElement('div');
+        const timestamp = new Date().toISOString().split('T')[1].slice(0, 8);
+        entry.className = `log-entry ${type}`;
+        entry.innerText = `[${timestamp}] ${message}`;
+        terminalLogs.appendChild(entry);
+        terminalLogs.scrollTop = terminalLogs.scrollHeight;
+    }
+
+    function clearLogs() {
+        terminalLogs.innerHTML = '<div class="log-entry info">Terminal cleared.</div>';
+    }
+
+    // Live edge sync — keeps playback at the live edge
+    setInterval(() => {
+        if (!videoElement.buffered.length) return;
+
+        const liveEnd = videoElement.buffered.end(videoElement.buffered.length - 1);
+        const bufferGap = liveEnd - videoElement.currentTime;
+
+        if (bufferGap > 0.8) {
+            videoElement.currentTime = liveEnd - 0.1;
+            videoElement.playbackRate = 1.0;
+            log("Buffer gap too large — jumping to live edge.", "error");
+        } else if (bufferGap > 0.25) {
+            videoElement.playbackRate = 1.25;
+        } else {
+            videoElement.playbackRate = 1.0;
+        }
+    }, 200);
+
+    // Single pipeline init — used for both first load and reconnects
+    function initializeVideoPlayer() {
+        if (mediaSource && mediaSource.readyState === 'open') {
+            try { mediaSource.endOfStream(); } catch(e) { /* ignore */ }
+        }
+
+        mediaSource = new MediaSource();
+        sourceBuffer = null; // null until sourceopen fires, frames queue safely
+
+        videoElement.src = URL.createObjectURL(mediaSource);
+
+        mediaSource.addEventListener('sourceopen', () => {
+            log("MediaSource pipeline ready.", "info");
+
+            try {
+                sourceBuffer = mediaSource.addSourceBuffer('video/webm; codecs="vp8, opus"');
+            } catch(e) {
+                log(`Failed to create source buffer: ${e.message}`, "error");
+                return;
+            }
+
+            sourceBuffer.addEventListener('updateend', () => {
+                // Gap jumper: playhead at 0 but data starts later (late join)
+                if (videoElement.currentTime < 0.5 && sourceBuffer.buffered.length > 0) {
+                    const bufferedStart = sourceBuffer.buffered.start(0);
+                    if (bufferedStart > 0.5) {
+                        log(`Timeline gap — jumping playhead to ${bufferedStart.toFixed(2)}s`, "info");
+                        videoElement.currentTime = bufferedStart;
+                        videoElement.play();
+                    }
+                }
+
+                // Drain queue
+                if (queue.length > 0 && !sourceBuffer.updating) {
+                    try {
+                        safeAppend(queue.shift());
+                    } catch(e) {
+                        log(`Queue drain error: ${e.message}`, "error");
+                    }
+                }
+            });
+
+            // Drain frames that arrived while sourceopen was pending
+            if (queue.length > 0) {
+                log(`Flushing ${queue.length} queued frames into fresh pipeline.`, "info");
+                try {
+                    safeAppend(queue.shift());
+                } catch(e) {
+                    log(`Initial drain error: ${e.message}`, "error");
+                }
+            }
+        });
+    }
+
+    // Replace your appendBuffer calls with this helper
+    function safeAppend(frame) {
+        if (videoElement.error) {
+            log(`Video element in error state (code: ${videoElement.error.code}) — resetting.`, "error");
+            resetPipeline();
+            queue.push(frame); // preserve frame for new pipeline
+            return;
+        }
+
+        if (!mediaSource || mediaSource.readyState !== 'open' || !sourceBuffer || sourceBuffer.updating) {
+            queue.push(frame);
+            return;
+        }
+
+        try {
+            sourceBuffer.appendBuffer(frame);
+        } catch(e) {
+            log(`Buffer append error: ${e.message}`, "error");
+            // If append throws, the pipeline is broken — reset
+            resetPipeline();
+            queue.push(frame);
+        }
+    }
+
+    function resetPipeline() {
+        if (reconnectTimer) {           // guard against double resets
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+
+        queue = [];
+
+        // This exact order matters to clear videoElement.error:
+        videoElement.pause();
+        videoElement.removeAttribute('src');  // must remove src BEFORE load()
+        videoElement.load();                  // this clears videoElement.error
+
+        initializeVideoPlayer();
+    }
+
+    function initViewer() {
+        const targetUrl = wsUrlInput.value.trim();
+        if (!targetUrl) {
+            log("No endpoint URL provided.", "error");
+            return;
+        }
+
+        statusText.innerText = "Status: Initializing...";
+        wsUrlInput.disabled = true;
+        connectBtn.disabled = true;
+
+        log("Initializing media pipeline...", "info");
+        initializeVideoPlayer(); // single source of truth for pipeline setup
+        connectWebSocket(targetUrl);
+    }
+
+    function connectWebSocket(url) {
+        currentStreamUrl = url;
+        log(`Connecting to: ${url}`, "info");
+
+        try {
+            socket = new WebSocket(url);
+            socket.binaryType = 'arraybuffer';
+        } catch(e) {
+            log(`Connection failed: ${e.message}`, "error");
+            resetUI();
+            return;
+        }
+
+        socket.onopen = () => {
+            statusText.innerText = "Status: Streaming Live";
+            statusText.style.color = "var(--success)";
+            log("Connected. Awaiting stream...", "success");
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+        };
+
+        socket.onmessage = (event) => {
+            const packet = event.data;
+
+            // Text signal handler — server lifecycle events
+            if (typeof packet === "string") {
+                try {
+                    const signal = JSON.parse(packet);
+                    if (signal.event === "STREAM_RESTARTED") {
+                        log("Server signal: camera reconnected — resetting pipeline.", "info");
+                        resetPipeline();
+                    }
+                } catch(e) {
+                    log(`Malformed signal received: ${e.message}`, "error");
+                }
+                return;
+            }
+
+            // Binary frame handler
+            frameNum++;
+            if (packet.byteLength < 8) {
+                log(`Frame #${frameNum} too short (${packet.byteLength} bytes) — dropped.`, "error");
+                return;
+            }
+
+            // Latency from timestamp header
+            const view = new DataView(packet);
+            let captureTimestamp = view.getFloat64(0);
+            if (captureTimestamp < 1000000000000) captureTimestamp *= 1000;
+            latencyDisplay.innerText = `${Date.now() - captureTimestamp} ms`;
+
+            const cleanVideoFrame = packet.slice(8);
+
+            // WebM header detection — new stream arriving mid-session
+            const headerBytes = new Uint8Array(cleanVideoFrame, 0, 4);
+            const isNewStreamHeader = headerBytes[0] === 0x1A &&
+                                    headerBytes[1] === 0x45 &&
+                                    headerBytes[2] === 0xDF &&
+                                    headerBytes[3] === 0xA3;
+
+            if (isNewStreamHeader && mediaSource?.readyState === 'open' && videoElement.currentTime > 0) {
+                log("New WebM header mid-session — resetting pipeline.", "info");
+                resetPipeline();
+                queue.push(cleanVideoFrame); // preserve this keyframe for new pipeline
+                return;
+            }
+
+            // Drop frame if pipeline not ready — it will queue naturally on next frame
+            if (!mediaSource || mediaSource.readyState !== 'open' || !sourceBuffer) {
+                queue.push(cleanVideoFrame); // queue instead of drop
+                return;
+            }
+
+            if (!sourceBuffer.updating && queue.length === 0) {
+                try {
+                    safeAppend(cleanVideoFrame);
+                } catch(e) {
+                    log(`Buffer append error: ${e.message}`, "error");
+                }
+            } else {
+                queue.push(cleanVideoFrame);
+            }
+        };
+
+        socket.onclose = (event) => {
+            statusText.innerText = "Status: Reconnecting...";
+            statusText.style.color = "var(--warning)";
+            log(`Connection closed (code: ${event.code}) — retrying in ${RECONNECT_DELAY_MS}ms...`, "error");
+
+            if (reconnectTimer) clearTimeout(reconnectTimer); // clear any existing timer
+            reconnectTimer = setTimeout(() => {
+                log("Reconnecting...", "info");
+                resetPipeline();
+                connectWebSocket(currentStreamUrl);
+            }, RECONNECT_DELAY_MS);
+        };
+
+        socket.onerror = () => {
+            log("WebSocket error.", "error");
+        };
+    }
+
+    function resetUI() {
+        wsUrlInput.disabled = false;
+        connectBtn.disabled = false;
+        latencyDisplay.innerText = "-- ms";
+        latencyDisplay.style.color = "var(--text-muted)";
+    }
+</script>
+</body>
+</html>
