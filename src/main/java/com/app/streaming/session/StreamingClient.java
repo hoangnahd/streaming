@@ -4,15 +4,14 @@ import org.springframework.web.socket.WebSocketSession;
 
 public class StreamingClient {
     private String profile;
-    private String role;
+    private boolean isCamActive;
     private final WebSocketSession session;
     private byte[] initHeaderSegment = null;
-    private volatile byte[] latestKeyframeCluster = null;
 
-    public StreamingClient(WebSocketSession session, String profile, String role) {
+    public StreamingClient(WebSocketSession session, String profile, boolean isCamActive) {
         this.session = session;
         this.profile = profile;
-        this.role = role;
+        this.isCamActive = isCamActive;
     }
     // Getter
     public String getProfile() {
@@ -23,20 +22,16 @@ public class StreamingClient {
         this.profile = profile;
     }
 
-    public String getRole() {
-        return this.role;
+    public boolean isCamActive() {
+        return this.isCamActive;
     }
 
     public byte[] getInitHeaderSegment() {
         return initHeaderSegment;
     }
 
-    public void setRole(String role) {
-        this.role = role;
-    }
-
-    public byte[] getLatestKeyframeCluster() {
-        return latestKeyframeCluster;
+    public void setIsCamActive(Boolean isCamActive) {
+        this.isCamActive = isCamActive;
     }
 
     public String getSessionId() {
@@ -47,23 +42,20 @@ public class StreamingClient {
         return this.session;
     }
 
+    public boolean getIsCamActive() {
+        return this.isCamActive;
+    }
+
     // Setter
     public void setInitHeaderSegment(byte[] initHeaderSegment) {
         this.initHeaderSegment = initHeaderSegment;
     }
 
-    public void setLatestKeyframeCluster(byte[] latestKeyframeCluster) {
-        this.latestKeyframeCluster = latestKeyframeCluster;
-    }
-
     public void clearCache() {
         this.initHeaderSegment = null;
-        this.latestKeyframeCluster = null;
     }
 
     public boolean isOpen() {
         return session.isOpen();
     }
-
-
 }
