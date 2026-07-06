@@ -135,10 +135,6 @@ public class CameraTranscoder implements Closeable {
                     if (isWebmInitHeader(transcoded)) {
                         broadcastSink.cacheInitHeader(cameraSessionId, viewerBytes);
                     }
-                    // Update latest keyframe
-                    if(isKeyframeCluster(transcoded)) {
-                        broadcastSink.cacheLatestKeyFrame(cameraSessionId, viewerBytes);
-                    }
                     // Broad cast message
                     broadcastSink.sendBinaryMessage(
                         cameraSessionId,

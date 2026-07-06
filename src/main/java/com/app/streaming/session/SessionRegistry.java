@@ -3,11 +3,8 @@ package com.app.streaming.session;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketSession;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
-
 @Component
 public class SessionRegistry {
 
@@ -35,6 +32,7 @@ public class SessionRegistry {
         }
         return true;
     }
+    
     public void registerClient(StreamingClient client) {
         if(clients.get(client.getSessionId()) == null && client.isOpen()) {
             clients.put(client.getSessionId(), client);
@@ -42,7 +40,7 @@ public class SessionRegistry {
         } else
             System.out.println("[Session registry]: Session existed or dead!");
     }
-
+    
     public void removeSession(String sessionId) {
         clients.remove(sessionId);
     }
@@ -53,23 +51,14 @@ public class SessionRegistry {
             client.setInitHeaderSegment(initHeader);
         }
     }
-    public void updateLatestKeyframe(String sessionId, byte[] latestKeyframe) {
-        StreamingClient client = clients.get(sessionId);
-        if (client != null) {
-            client.setLatestKeyframeCluster(latestKeyframe);
-        }
-    }
 
     public List<WebSocketSession> getSessions() {
         return this.clients.values().stream().map(StreamingClient::getSession)
                 .toList(); // Returns an unmodifiable List<StreamingClient>
     }
+
     public List<byte[]> getInitHeaders() {
         return this.clients.values().stream().map(StreamingClient::getInitHeaderSegment)
-                .toList(); // Returns an unmodifiable List<StreamingClient>
-    }
-    public List<byte[]> getLatestKeyframes() {
-        return this.clients.values().stream().map(StreamingClient::getLatestKeyframeCluster)
                 .toList(); // Returns an unmodifiable List<StreamingClient>
     }
 }

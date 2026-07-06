@@ -329,7 +329,7 @@
             <h2 class="section-title">2. Network Gateway</h2>
             <div class="form-group">
                 <label for="wsUrl">Target Endpoint Address</label>
-                <input type="text" id="wsUrl" value="wss://localhost:8443/video-stream" autocomplete="off">
+                <input type="text" id="wsUrl" value="wss://localhost:8443/video-stream?isCamActive=true" autocomplete="off">
             </div>
             <div class="btn-group">
                 <button id="btnConnect" class="btn-primary" disabled>Connect WS</button>
@@ -410,51 +410,40 @@
     let mediaStream = null;
     let mediaRecorder = null;
     let chunksSent = 0;
+    let shouldAutoReconnect = false;
 
     function log(message, type = 'info') {
         const time = new Date().toLocaleTimeString([], { hour12: false });
         const line = document.createElement('div');
         line.className = 'terminal-line';
-
         let prefix = `[${time}] `;
-        if (type === 'error') {
-            line.style.color = '#f87171';
-            prefix += 'ERR: ';
-        } else if (type === 'success') {
-            line.style.color = '#34d399';
-            prefix += 'OK: ';
-        } else {
-            line.style.color = '#94a3b8';
-        }
-
+        if (type === 'error') { line.style.color = '#f87171'; prefix += 'ERR: '; }
+        else if (type === 'success') { line.style.color = '#34d399'; prefix += 'OK: '; }
+        else { line.style.color = '#94a3b8'; }
         line.innerHTML = `<span class="terminal-time">${prefix}</span>${message}`;
         terminal.appendChild(line);
         terminal.scrollTop = terminal.scrollHeight;
     }
 
-    // Feature 1: Isolated Camera Hardware Activation
+    // ── Camera hardware ───────────────────────────────────────────────────────────
+
     btnToggleCamera.addEventListener('click', async () => {
         if (mediaStream) {
             log('Tearing down existing hardware allocations.');
             stopCameraHardware();
             return;
         }
-
         log('Requesting localized peripheral permissions.');
         try {
             mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             previewVideo.srcObject = mediaStream;
-
             videoPlaceholder.style.display = 'none';
             videoBadge.style.display = 'inline-flex';
             videoBadge.textContent = 'Staging Feed';
-
             btnToggleCamera.textContent = 'Terminate Camera Feed';
             btnToggleCamera.className = 'btn-danger';
-
-            btnConnect.disabled = false; // Allow step 2 once step 1 is validated
+            btnConnect.disabled = false;
             log('Staging layout active. Video capturing locally.', 'success');
-
             if (ws && ws.readyState === WebSocket.OPEN) {
                 btnStartStream.disabled = false;
             }
@@ -475,21 +464,90 @@
         previewVideo.srcObject = null;
         videoPlaceholder.style.display = 'flex';
         videoBadge.style.display = 'none';
-
         btnToggleCamera.textContent = 'Initialize Camera Feed';
         btnToggleCamera.className = 'btn-secondary';
-
         btnStartStream.disabled = true;
         log('Hardware framework unmounted.');
     }
 
-    // Feature 2: Socket Pipeline Connection Layer
-    btnConnect.addEventListener('click', () => {
-        const url = wsUrlInput.value.trim();
-        if (!url) {
-            log('Target system address parameter null.', 'error');
+    // ── WebSocket handlers — extracted so both btnConnect and autoReconnect share them ──
+
+    function buildWsHandlers(isAutoReconnect) {
+        ws.onopen = () => {
+            log(isAutoReconnect
+                ? 'Auto-reconnect successful. Restarting stream.'
+                : 'TCP pipeline established. Handshake accepted.', 'success');
+            netStatus.textContent = 'Connected';
+            netStatus.className = 'badge badge-connected';
+            netStatus.style.backgroundColor = '';
+            netStatus.style.color = '';
+            btnDisconnect.disabled = false;
+
+            if (isAutoReconnect) {
+                // Auto-reconnect: always restart streaming immediately
+                if (mediaStream) {
+                    startStreaming();
+                } else {
+                    log('No media stream available after reconnect.', 'error');
+                    resetNetworkUI();
+                }
+            } else {
+                // Manual connect: let user click Start Stream
+                if (mediaStream) {
+                    btnStartStream.disabled = false;
+                } else {
+                    log('Gateway open, awaiting primary hardware track activation.', 'info');
+                }
+            }
+        };
+
+        ws.onclose = (e) => {
+            log(`Socket connection dropped. Code: ${e.code}`);
+            if (shouldAutoReconnect) {
+                shouldAutoReconnect = false;
+                log('Server-initiated reconnect — re-establishing in 500ms...', 'info');
+                setTimeout(() => autoReconnect(), 500);
+                return;
+            }
+            resetNetworkUI();
+        };
+
+        ws.onmessage = (event) => {
+            if (typeof event.data !== 'string') return;
+            try {
+                const signal = JSON.parse(event.data);
+                if (signal.event === 'FORCE_RECONNECT') {
+                    log('Server requested reconnect — restarting stream.', 'info');
+                    shouldAutoReconnect = true;
+                    forceStopRecorder(() => {
+                        // Only close WebSocket AFTER recorder fully stopped
+                        ws.close();
+                    });
+                }
+            } catch (e) { /* ignore non-JSON */ }
+        };
+
+        ws.onerror = () => {
+            log('Asynchronous socket transport failure discovered.', 'error');
+        };
+    }
+
+    // Stops MediaRecorder and calls callback only after 'stop' event fires
+    // This prevents the race condition between recorder flush and ws.close()
+    function forceStopRecorder(onStopped) {
+        if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+            onStopped();
             return;
         }
+        mediaRecorder.addEventListener('stop', () => onStopped(), { once: true });
+        mediaRecorder.stop();
+    }
+
+    // ── Connect / disconnect ──────────────────────────────────────────────────────
+
+    btnConnect.addEventListener('click', () => {
+        const url = wsUrlInput.value.trim();
+        if (!url) { log('Target system address parameter null.', 'error'); return; }
 
         log(`Negotiating state layer connection to: ${url}`);
         netStatus.textContent = 'Upgrading';
@@ -500,32 +558,8 @@
 
         try {
             ws = new WebSocket(url);
-            ws.binaryType = 'arraybuffer'; // CRITICAL
-
-            ws.onopen = () => {
-                log('TCP pipeline established. Handshake accepted.', 'success');
-                netStatus.textContent = 'Connected';
-                netStatus.className = 'badge badge-connected';
-                netStatus.style.backgroundColor = '';
-                netStatus.style.color = '';
-
-                btnDisconnect.disabled = false;
-                if (mediaStream) {
-                    btnStartStream.disabled = false;
-                } else {
-                    log('Gateway open, awaiting primary hardware track activation.', 'info');
-                }
-            };
-
-            ws.onclose = (e) => {
-                log(`Socket connection dropped. Code: ${e.code}`);
-                resetNetworkUI();
-            };
-
-            ws.onerror = () => {
-                log('Asynchronous socket transport failure discovered.', 'error');
-            };
-
+            ws.binaryType = 'arraybuffer';
+            buildWsHandlers(false);  // manual connect — don't auto-start streaming
         } catch (e) {
             log(`Pipeline instantiation aborted: ${e.message}`, 'error');
             resetNetworkUI();
@@ -533,19 +567,41 @@
     });
 
     btnDisconnect.addEventListener('click', () => {
+        shouldAutoReconnect = false;  // user-initiated — prevent auto-reconnect
         if (ws) ws.close();
     });
 
-    // Feature 3: Live Telemetry & Record Streaming Loop
-    btnStartStream.addEventListener('click', () => {
-        if (!mediaStream) {
-            log('Stream processing failure: Hardware staging offline.', 'error');
+    function autoReconnect() {
+        const url = wsUrlInput.value.trim();
+        if (!url || !mediaStream) {
+            log('Auto-reconnect aborted — no URL or camera.', 'error');
+            resetNetworkUI();
             return;
         }
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-            log('Stream processing failure: Gateway connection offline.', 'error');
-            return;
+
+        log(`Auto-reconnecting to: ${url}`, 'info');
+        netStatus.textContent = 'Reconnecting';
+        netStatus.style.backgroundColor = 'rgba(234, 179, 8, 0.1)';
+        netStatus.style.color = '#f59e0b';
+
+        try {
+            ws = new WebSocket(url);
+            ws.binaryType = 'arraybuffer';
+            buildWsHandlers(true);  // auto-reconnect — restart streaming immediately on open
+        } catch (e) {
+            log(`Auto-reconnect failed: ${e.message}`, 'error');
+            resetNetworkUI();
         }
+    }
+
+    // ── Streaming ─────────────────────────────────────────────────────────────────
+
+    btnStartStream.addEventListener('click', () => startStreaming());
+    btnStopStream.addEventListener('click', () => stopStreamingTransmission());
+
+    function startStreaming() {
+        if (!mediaStream) { log('Stream processing failure: Hardware staging offline.', 'error'); return; }
+        if (!ws || ws.readyState !== WebSocket.OPEN) { log('Stream processing failure: Gateway offline.', 'error'); return; }
 
         log('Configuring payload chunk serialization parameters.');
         let options = { mimeType: 'video/webm; codecs=vp8,opus' };
@@ -571,8 +627,6 @@
                         ws.send(combined.buffer);
                         chunksSent++;
                         chunkCountEl.textContent = chunksSent;
-                        console.log('SEND header bytes:', new Uint8Array(combined.buffer, 0, 8));
-                        console.log('SEND timestamp:', timestamp, new Date(timestamp).toISOString());
                     }
                 }
             };
@@ -583,18 +637,13 @@
             streamStatus.className = 'badge badge-streaming';
             videoBadge.textContent = 'LIVE';
             videoBadge.className = 'badge badge-streaming';
-
             btnStartStream.disabled = true;
             btnStopStream.disabled = false;
             log('Binary stream packet dispatch pipeline running.', 'success');
         } catch (e) {
             log(`MediaRecorder initialization crashed: ${e.message}`, 'error');
         }
-    });
-
-    btnStopStream.addEventListener('click', () => {
-        stopStreamingTransmission();
-    });
+    }
 
     function stopStreamingTransmission() {
         log('Halting packet extraction loops.');
@@ -603,13 +652,11 @@
         }
         streamStatus.textContent = 'Idle';
         streamStatus.className = 'badge badge-idle';
-
         if (mediaStream) {
             videoBadge.textContent = 'Staging Feed';
             videoBadge.className = 'badge badge-idle';
             videoBadge.style.backgroundColor = 'rgba(15, 23, 42, 0.7)';
         }
-
         btnStopStream.disabled = true;
         btnStartStream.disabled = (ws && ws.readyState === WebSocket.OPEN && mediaStream) ? false : true;
         log('Binary stream disconnected. Hardware track preserved.');

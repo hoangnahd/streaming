@@ -3,7 +3,6 @@ package com.app.streaming.handler;
 import com.app.streaming.broadcast.BroadcastSink;
 import com.app.streaming.session.SessionRegistry;
 import com.app.streaming.session.StreamingClient;
-import com.app.streaming.transcoder.KeyframeDetector;
 
 import org.jspecify.annotations.NonNull;
 import org.springframework.stereotype.Component;
@@ -13,25 +12,33 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.BinaryWebSocketHandler;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
 @Component
 public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
     private final Logger log = Logger.getLogger(AdaptiveVideoBroadcastHandler.class.getName());
 
-    private static final String ROLE_KEY = "ROLE";
+    private final Map<String, ScheduledFuture<?>> reconnectTimers = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+
+    private static final long RECONNECT_DEBOUNCE_MS = 500;
+    private static final String FORCE_RECONNECT_SIGNAL = "{\"event\":\"FORCE_RECONNECT\"}";
+    private static final String CAM_STATUS = "CAM_STATUS";
     private static final String PROFILE_KEY = "PROFILE";
     private static final String STREAM_RESTARTED_SIGNAL = "{\"event\":\"STREAM_RESTARTED\"}";
 
     private final SessionRegistry sessionRegistry;
     private final BroadcastSink broadcastSink;
     // private final TranscoderFactory transcoderFactory;
-
-    // One detector per camera session (keyed by camera sessionId)
-    private final Map<String, KeyframeDetector> detectors = new ConcurrentHashMap<>();
 
 
 
@@ -41,59 +48,82 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
         // this.transcoderFactory = transcoderFactory;
     }
 
-    // WebM keyframe cluster magic bytes: starts with 0x1F43B675
-    private boolean isKeyframeCluster(byte[] webmData) {
-        if (webmData.length < 12) return false;
-        return (webmData[8] & 0xFF) == 0x1F &&
-            (webmData[9] & 0xFF) == 0x43 &&
-            (webmData[10] & 0xFF) == 0xB6 &&
-            (webmData[11] & 0xFF) == 0x75;
+
+    private void scheduleReconnect(StreamingClient camera) {
+        String cameraId = camera.getSessionId();
+
+        // Cancel existing timer — reset the debounce window
+        cancelReconnectTimer(cameraId);
+
+        ScheduledFuture<?> future = scheduler.schedule(() -> {
+            reconnectTimers.remove(cameraId);
+            WebSocketSession camSession = camera.getSession();
+            if (camSession != null && camSession.isOpen()) {
+                try {
+                    log.info("[Handler] Forcing camera reconnect: " + cameraId);
+                    camSession.sendMessage(new TextMessage(FORCE_RECONNECT_SIGNAL));
+                } catch (IOException e) {
+                    log.warning("[Handler] Failed to send FORCE_RECONNECT: " + e.getMessage());
+                }
+            }
+        }, RECONNECT_DEBOUNCE_MS, TimeUnit.MILLISECONDS);
+        
+        reconnectTimers.put(cameraId, future);
+    }
+
+    private void cancelReconnectTimer(String cameraId) {
+        ScheduledFuture<?> existing = reconnectTimers.remove(cameraId);
+        if (existing != null) {
+            existing.cancel(false);
+        }
     }
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        log.info("ENTER afterConnectionEstablished");
-
         if (!session.isOpen() || session.getUri() == null) return;
 
         String query   = session.getUri().getQuery();
-        String role    = (query != null && query.contains("role=viewer")) ? "VIEWER" : "CAMERA";
+        boolean isCamActive    = (query != null && query.contains("isCamActive=true")) ? true : false;
         String profile = (query != null && query.contains("profile=low")) ? "LOW"    : "HIGH";
 
-        log.info("sessionId: " + session.getId() + " role: " + role + " profile: " + profile);
-
-        session.getAttributes().put(ROLE_KEY, role);
+        session.getAttributes().put(CAM_STATUS, isCamActive);
         session.getAttributes().put(PROFILE_KEY, profile);
 
-        StreamingClient newClient = new StreamingClient(session, profile, role);
+        StreamingClient newClient = new StreamingClient(session, profile, isCamActive);
         sessionRegistry.registerClient(newClient);
         log.info("[Handler] Client registered: " + session.getId());
 
-        if ("CAMERA".equals(role)) {
-            newClient.setInitHeaderSegment(null);
-            newClient.setLatestKeyframeCluster(null);
-
-            // 1. Create a fresh detector; its listener updates StreamingClient
-            KeyframeDetector detector = new KeyframeDetector(clusterBytes -> {
-                newClient.setLatestKeyframeCluster(clusterBytes);
-            });
-            detectors.put(newClient.getSessionId(), detector);
-
+        if (isCamActive) {
+            newClient.clearCache();
+            // Broadcast restarted signal
             broadcastSink.sendTextMessage(session.getId(), new TextMessage(STREAM_RESTARTED_SIGNAL));
-            log.info("[Handler] Camera connected successfully: " + session.getId());
-            
+        
         } else {
-            log.info("[Handler] Viewer joined stream: " + session.getId());
-            broadcastSink.sendInitHeaders(session);
-            broadcastSink.sendLatestKeyFrames(session);
+            List<StreamingClient> cameras = sessionRegistry.getClients().stream()
+                .filter(client -> client.getIsCamActive())          // Boolean unboxing, no need for == true
+                .toList();;
+            // Camera exists — schedule a forced reconnect (debounced)
+            if (!cameras.isEmpty()) {
+                cameras.forEach(camera -> {
+                    scheduleReconnect(camera);
+                    log.info("[Handler] Viewer joined — reconnect scheduled for camera: "
+                        + camera.getSessionId());
+                });
+            }
         }
+
+        log.info(
+            "\n[Handler] Client: " + newClient.getSessionId() + 
+            "\nJoined with camStatus: " + isCamActive + 
+            "\nSession id: " + session.getId()
+        );
     }
 
     @Override
     public void handleBinaryMessage(WebSocketSession session,
                                     @NonNull BinaryMessage message) throws Exception {
 
-        if (!"CAMERA".equals(session.getAttributes().get(ROLE_KEY))) return;
+        if (session.getAttributes().get(CAM_STATUS).equals(false)) return;
 
         ByteBuffer payload = message.getPayload();
         if (payload.remaining() <= 8) {
@@ -110,19 +140,6 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
         StreamingClient client = sessionRegistry.getClientById(session.getId());
         if(client.getInitHeaderSegment() == null) {
             client.setInitHeaderSegment(raw);
-        }
-        // if(isKeyframeCluster(raw)) {
-        //     client.setLatestKeyframeCluster(raw);
-        // }
-        // 2. Feed into detector (cheap — just boundary scan + optional accumulation)
-        // Feed ONLY pure WebM bytes (strip 8-byte timestamp) into detector
-        KeyframeDetector detector = detectors.get(session.getId());
-        if (detector != null) {
-            try {
-                detector.feed(raw, 8); // ← pass offset, don't allocate a copy
-            } catch (Exception e) {
-                log.warning("[Handler] KeyframeDetector error: " + e.getMessage());
-            }
         }
 
         // 3. Broadcast ALWAYS runs, even if detector failed
@@ -147,11 +164,11 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
 
         sessionRegistry.removeSession(session.getId());
 
-        if ("CAMERA".equals(session.getAttributes().get(ROLE_KEY))) {
-            log.info("[Handler] Flushing camera header segment: " + session.getId());
+        if (session.getAttributes().get(CAM_STATUS).equals(true)) {
+            log.info("\n[Handler] Flushing camera header segment: " + session.getId());
 
             broadcastSink.sendTextMessage(session.getId(), new TextMessage(STREAM_RESTARTED_SIGNAL));
-            log.info("[Handler] Camera disconnected, viewers notified: " + session.getId());
+            log.info("\n[Handler] Camera disconnected, viewers notified: " + session.getId());
 
             // if ("HIGH".equals(session.getAttributes().get(PROFILE_KEY))) {
             //     log.info("[Handler] Closing transcoding process: " + session.getId());
@@ -161,7 +178,7 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
             // }
         }
 
-        log.info("[Handler] Connection closed: " + session.getId() +
+        log.info("\n[Handler] Connection closed: " + session.getId() +
                 " | Reason: " + status.getReason());
     }
 }

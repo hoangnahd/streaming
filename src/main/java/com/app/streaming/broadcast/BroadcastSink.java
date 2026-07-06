@@ -23,9 +23,6 @@ public class BroadcastSink {
     public void cacheInitHeader(String cameraSessionId, byte[] initHeader) {
         sessionRegistry.updateInitHeader(cameraSessionId, initHeader);
     }
-    public void cacheLatestKeyFrame(String cameraSessionId, byte[] latestKeyframe) {
-        sessionRegistry.updateLatestKeyframe(cameraSessionId, latestKeyframe);
-    }
 
     public void sendInitHeaders(WebSocketSession session) {
         // 1. Guard clause: Check if session is alive first before pulling headers
@@ -54,51 +51,6 @@ public class BroadcastSink {
             System.out.println("[BroadcastSink] Successfully sent initialization headers to: " + session.getId());
         } catch (IOException e) {
             System.err.println("[BroadcastSink] Fail sending headers to " + session.getId() + ": " + e.getMessage());
-        }
-    }
-
-    public void sendLatestKeyFrames(WebSocketSession session) {
-        // 1. Guard clause: Check if session is alive
-        if (!sessionRegistry.isSessionAlive(session.getId())) {
-            System.out.println("[BroadcastSink] Session is not alive.");
-            return;
-        }
-
-        List<byte[]> latestKeyframes = sessionRegistry.getLatestKeyframes();
-        
-        // 2. Filter out nulls and collect into a local list
-        List<byte[]> validKeyframes = latestKeyframes.stream()
-                .filter(Objects::nonNull)
-                .toList(); // Use .collect(Collectors.toList()) if on Java 8-15
-
-        if (validKeyframes.isEmpty()) {
-            return; // Nothing to send
-        }
-
-        // 3. Safe loop: Only valid frames are present
-        try {
-            int index = 0;
-            for (byte[] keyframe : validKeyframes) {
-
-                System.out.printf(
-                        "[BroadcastSink] Keyframe #%d: %d bytes%n",
-                        index++,
-                        keyframe.length);
-
-                // Print first 32 bytes in hexadecimal
-                int previewLength = Math.min(32, keyframe.length);
-                StringBuilder hex = new StringBuilder();
-                for (int i = 0; i < previewLength; i++) {
-                    hex.append(String.format("%02X ", keyframe[i] & 0xFF));
-                }
-
-                System.out.println("[BroadcastSink] First bytes: " + hex);
-
-                session.sendMessage(new BinaryMessage(keyframe));
-            }
-
-        } catch (IOException e) {
-            System.err.println("[BroadcastSink] Fail sending frame to " + session.getId() + ": " + e.getMessage());
         }
     }
 
