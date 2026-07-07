@@ -25,7 +25,7 @@ public class CameraTranscoder implements Closeable {
     private static final Logger log = Logger.getLogger(CameraTranscoder.class.getName());
 
     // Output chunk size — read stdout in 64 KB blocks
-    private static final int READ_BUFFER_SIZE = 64 * 1024;
+    private static final int READ_BUFFER_SIZE = 32 * 1024;
 
     private final Process        ffmpegProcess;
     private final OutputStream   ffmpegStdin;
@@ -33,6 +33,7 @@ public class CameraTranscoder implements Closeable {
     private final String         cameraSessionId;
     private final AtomicBoolean  running = new AtomicBoolean(true);
     private final AtomicBoolean  closing = new AtomicBoolean(false);
+    private final AtomicBoolean waitingForInitHeader = new AtomicBoolean(true);
     private volatile Thread stdoutReader;
     private volatile Thread stderrReader;
 
@@ -45,7 +46,7 @@ public class CameraTranscoder implements Closeable {
                              String cameraSessionId) {
         this.ffmpegProcess   = ffmpegProcess;
         this.ffmpegStdin     = new BufferedOutputStream(
-                ffmpegProcess.getOutputStream(), 256 * 1024); // 256 KB write buffer
+                ffmpegProcess.getOutputStream(), 128 * 1024); // 256 KB write buffer
         this.broadcastSink   = broadcastSink;
         this.cameraSessionId = cameraSessionId;
     }
@@ -67,36 +68,36 @@ public class CameraTranscoder implements Closeable {
                 "ffmpeg",
                 "-loglevel",   "warning",
 
-                // Input flags — treat stdin as a live stream
-                "-fflags",     "nobuffer",
-                "-flags",      "low_delay",
-                "-fflags",     "nobuffer+discardcorrupt",
+                "-fflags",          "nobuffer",
+                "-flags",           "low_delay",
+                "-fflags",          "nobuffer+discardcorrupt",
                 "-analyzeduration", "0",
-                "-probesize",  "32768",
+                "-probesize",       "32768",
 
-                // Input format and source
                 "-f",          "webm",
-                "-i",          "pipe:0",          // read WebM from stdin
+                "-i",          "pipe:0",
 
-                // Video: scale to 720p, re-encode VP9 realtime
                 "-vf",         "scale=1280:720",
-                "-c:v",        "libvpx-vp9",
+                "-c:v",        "libvpx",
                 "-deadline",   "realtime",
-                "-cpu-used",   "8",
+                "-cpu-used",   "16",
                 "-b:v",        "2500k",
                 "-row-mt",     "1",
                 "-tile-columns","2",
-                "-g",          "60",              // keyframe every 2s at 30fps
+                "-g",          "60",
 
-                // Audio: pass through Opus without re-encoding
                 "-c:a",        "copy",
 
-                // Output format and destination
+                // Force output muxer to flush every cluster immediately
+                "-flush_packets",       "1",
+                "-cluster_time_limit",  "1000",   // new cluster every 1 second max
+                "-cluster_size_limit",  "32768",  // or when cluster hits 32 KB
+
                 "-f",          "webm",
-                "pipe:1"                          // write transcoded WebM to stdout
+                "pipe:1"
         );
 
-        pb.redirectErrorStream(false); // keep stderr separate
+        pb.redirectErrorStream(false);
         return pb.start();
     }
 
@@ -130,11 +131,6 @@ public class CameraTranscoder implements Closeable {
                     viewerPayload.putDouble((double) latestInputTimestamp);
                     viewerPayload.put(transcoded);
                     byte[] viewerBytes = viewerPayload.array();
-
-                    // Update init header
-                    if (isWebmInitHeader(transcoded)) {
-                        broadcastSink.cacheInitHeader(cameraSessionId, viewerBytes);
-                    }
                     // Broad cast message
                     broadcastSink.sendBinaryMessage(
                         cameraSessionId,
@@ -155,15 +151,6 @@ public class CameraTranscoder implements Closeable {
                 (data[1] & 0xFF) == 0x45 &&
                 (data[2] & 0xFF) == 0xDF &&
                 (data[3] & 0xFF) == 0xA3;
-    }
-
-    // WebM keyframe cluster magic bytes: starts with 0x1F43B675
-    private boolean isKeyframeCluster(byte[] webmData) {
-        if (webmData.length < 4) return false;
-        return (webmData[0] & 0xFF) == 0x1F &&
-            (webmData[1] & 0xFF) == 0x43 &&
-            (webmData[2] & 0xFF) == 0xB6 &&
-            (webmData[3] & 0xFF) == 0x75;
     }
 
     private void readStderr() {
@@ -187,8 +174,21 @@ public class CameraTranscoder implements Closeable {
      */
     public void feedPacket(VideoPacket packet) throws IOException {
         if (!running.get()) return;
+
+        byte[] webm = packet.getWebmData();
+
+        if (waitingForInitHeader.get()) {
+            if (!isWebmInitHeader(webm)) {
+                log.fine("[Transcoder:" + cameraSessionId + "] Dropping pre-init chunk");
+                return;
+            }
+            // Init header arrived — open the gate permanently
+            waitingForInitHeader.set(false);
+            log.info("[Transcoder:" + cameraSessionId + "] Init header received, feeding FFmpeg");
+        }
+
         latestInputTimestamp = packet.getTimestamp();
-        ffmpegStdin.write(packet.getWebmData());
+        ffmpegStdin.write(webm);
         ffmpegStdin.flush();
     }
 

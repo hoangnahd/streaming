@@ -3,7 +3,6 @@ package com.app.streaming.handler;
 import com.app.streaming.broadcast.BroadcastSink;
 import com.app.streaming.session.SessionRegistry;
 import com.app.streaming.session.StreamingClient;
-
 import org.jspecify.annotations.NonNull;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.BinaryMessage;
@@ -38,14 +37,12 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
 
     private final SessionRegistry sessionRegistry;
     private final BroadcastSink broadcastSink;
-    // private final TranscoderFactory transcoderFactory;
 
 
 
     public AdaptiveVideoBroadcastHandler(SessionRegistry sessionRegistry, BroadcastSink broadcastSink) {
         this.sessionRegistry = sessionRegistry;
         this.broadcastSink = broadcastSink;
-        // this.transcoderFactory = transcoderFactory;
     }
 
 
@@ -134,9 +131,6 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
         byte[] raw = new byte[payload.remaining()];
         payload.get(raw);
 
-        // // 1. Parse — separate timestamp from WebM data
-        // VideoPacket packet = VideoPacket.parse(raw);
-
         StreamingClient client = sessionRegistry.getClientById(session.getId());
         if(client.getInitHeaderSegment() == null) {
             client.setInitHeaderSegment(raw);
@@ -144,18 +138,7 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
 
         // 3. Broadcast ALWAYS runs, even if detector failed
         broadcastSink.sendBinaryMessage(session.getId(), new BinaryMessage(raw));
-
-        // 4. Route based on profile
-        // if ("HIGH".equals(client.getProfile())) {
-        //     // Transcode path — feed WebM only to FFmpeg.
-        //     // Timestamp is preserved inside the packet and re-attached
-        //     // to the transcoded output by CameraTranscoder's stdout reader.
-        //     CameraTranscoder transcoder = transcoderFactory.getOrCreate(session.getId());
-        //     transcoder.feedPacket(packet);
-        // } else {
-            // Direct broadcast path — forward raw bytes including timestamp
-        // broadcastSink.sendBinaryMessage(session.getId(), new BinaryMessage(raw));
-        //}
+        
     }
 
     @Override
@@ -169,13 +152,6 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
 
             broadcastSink.sendTextMessage(session.getId(), new TextMessage(STREAM_RESTARTED_SIGNAL));
             log.info("\n[Handler] Camera disconnected, viewers notified: " + session.getId());
-
-            // if ("HIGH".equals(session.getAttributes().get(PROFILE_KEY))) {
-            //     log.info("[Handler] Closing transcoding process: " + session.getId());
-            //     // Flushes stdin, waits for FFmpeg to drain remaining frames,
-            //     // then force-kills if it doesn't exit within the timeout.
-            //     transcoderFactory.shutdown(session.getId());
-            // }
         }
 
         log.info("\n[Handler] Connection closed: " + session.getId() +
