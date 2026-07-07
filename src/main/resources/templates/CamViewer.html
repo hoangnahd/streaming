@@ -435,8 +435,12 @@
         }
         log('Requesting localized peripheral permissions.');
         try {
-            mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            previewVideo.srcObject = mediaStream;
+            mediaStream = await navigator.mediaDevices.getUserMedia({ video: {
+                width:     { ideal: 1280 },
+                height:    { ideal: 720  },
+                frameRate: { ideal: 30   }
+            }, audio: true });
+                    previewVideo.srcObject = mediaStream;
             videoPlaceholder.style.display = 'none';
             videoBadge.style.display = 'inline-flex';
             videoBadge.textContent = 'Staging Feed';

@@ -285,11 +285,10 @@
         let currentStreamUrl = null;
         let reconnectTimer = null;
         let frameNum = 0;
-
-        // Moved to module scope so resetPipeline can clear them
         let pendingInitSegment = null;
 
         const RECONNECT_DELAY_MS = 2000;
+        const MAX_BUFFER_BEHIND_SECONDS = 1.5;
 
         function log(message, type = 'info') {
             const entry = document.createElement('div');
@@ -300,25 +299,23 @@
             terminalLogs.scrollTop = terminalLogs.scrollHeight;
         }
 
-        function clearLogs() {
-            terminalLogs.innerHTML = '<div class="log-entry info">Terminal cleared.</div>';
-        }
+        // ── Register ONCE at startup ─────────────────────────────────────────────
+        // Fires when browser stalls because currentTime hit a gap in the buffer.
+        // Scans for buffered data ahead and jumps over the hole.
+        videoElement.addEventListener('waiting', () => {
+            if (!sourceBuffer || sourceBuffer.buffered.length === 0) return;
 
-        // Live edge sync
-        setInterval(() => {
-            if (!videoElement.buffered.length) return;
-            const liveEnd = videoElement.buffered.end(videoElement.buffered.length - 1);
-            const bufferGap = liveEnd - videoElement.currentTime;
-            if (bufferGap > 0.8) {
-                videoElement.currentTime = liveEnd - 0.1;
-                videoElement.playbackRate = 1.0;
-                log("Buffer gap too large — jumping to live edge.", "error");
-            } else if (bufferGap > 0.25) {
-                videoElement.playbackRate = 1.25;
-            } else {
-                videoElement.playbackRate = 1.0;
+            for (let i = 0; i < sourceBuffer.buffered.length; i++) {
+                if (sourceBuffer.buffered.start(i) > videoElement.currentTime + 0.1) {
+                    const jumpTo = sourceBuffer.buffered.start(i) + 0.05;
+                    log(`Gap detected — jumping to ${jumpTo.toFixed(2)}s`, "info");
+                    videoElement.currentTime = jumpTo;
+                    videoElement.play();
+                    break;
+                }
             }
-        }, 200);
+        });
+        // ────────────────────────────────────────────────────────────────────────
 
         function detectCodecs(initSegmentBytes) {
             const bytes = new Uint8Array(initSegmentBytes);
@@ -336,26 +333,41 @@
         }
 
         function onUpdateEnd() {
-            if (videoElement.currentTime < 0.5 && sourceBuffer && sourceBuffer.buffered.length > 0) {
-                const bufferedStart = sourceBuffer.buffered.start(0);
-                if (bufferedStart > 0.5) {
-                    log(`Timeline gap — jumping playhead to ${bufferedStart.toFixed(2)}s`, "info");
-                    videoElement.currentTime = bufferedStart;
-                    videoElement.play();
-                }
-            }
-            if (queue.length > 0 && sourceBuffer && !sourceBuffer.updating) {
+            if (!sourceBuffer || sourceBuffer.updating) return;
+
+            // Drain the queue first
+            if (queue.length > 0) {
                 try {
                     safeAppend(queue.shift());
                 } catch(e) {
                     log(`Queue drain error: ${e.message}`, "error");
                 }
+                return;
             }
+
+            // Live edge chaser — only runs when queue is empty
+            if (sourceBuffer.buffered.length === 0) return;
+
+            const liveEdge = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+            const behind = liveEdge - videoElement.currentTime;
+
+            if (behind > MAX_BUFFER_BEHIND_SECONDS) {
+                log(`Live edge chase — jumping ${behind.toFixed(2)}s → ${(liveEdge - 0.1).toFixed(2)}s`, "info");
+                videoElement.currentTime = liveEdge - 0.1;
+            }
+        }
+
+        function createSourceBuffer(mimeType) {
+            // Single place where SourceBuffer is created —
+            // guarantees updateend is wired exactly once per SourceBuffer instance.
+            sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+            sourceBuffer.addEventListener('updateend', onUpdateEnd);
+            log(`SourceBuffer created: ${mimeType}`, "info");
         }
 
         function safeAppend(frame) {
             if (videoElement.error) {
-                log(`Video element in error state (code: ${videoElement.error.code}) — resetting.`, "error");
+                log(`Video element error (code: ${videoElement.error.code}) — resetting.`, "error");
                 resetPipeline();
                 queue.push(frame);
                 return;
@@ -380,7 +392,6 @@
 
             mediaSource = new MediaSource();
             sourceBuffer = null;
-
             videoElement.src = URL.createObjectURL(mediaSource);
 
             mediaSource.addEventListener('sourceopen', () => {
@@ -388,9 +399,7 @@
 
                 if (pendingInitSegment) {
                     try {
-                        sourceBuffer = mediaSource.addSourceBuffer(pendingInitSegment.mimeType);
-                        sourceBuffer.addEventListener('updateend', onUpdateEnd);
-                        log(`SourceBuffer created: ${pendingInitSegment.mimeType}`, "info");
+                        createSourceBuffer(pendingInitSegment.mimeType);
                         safeAppend(pendingInitSegment.data);
                         pendingInitSegment = null;
                     } catch(e) {
@@ -398,7 +407,7 @@
                     }
                 }
             });
-        }  // ← initializeVideoPlayer closes here
+        }
 
         function resetPipeline() {
             if (reconnectTimer) {
@@ -483,40 +492,30 @@
                                     headerBytes[3] === 0xA3;
 
                 if (isWebMHeader) {
-                    // Mid-session stream restart detection
                     if (sourceBuffer && videoElement.currentTime > 0) {
                         log("New WebM header mid-session — resetting pipeline.", "info");
                         resetPipeline();
-                        // After reset, sourceopen will fire and pendingInitSegment handles it
                     }
 
                     const mimeType = detectCodecs(cleanVideoFrame);
                     log(`Detected codec: ${mimeType}`, "info");
 
                     if (sourceBuffer) {
-                        // SourceBuffer already exists (e.g. mid-session reset just completed
-                        // and somehow we got another init) — just append
                         safeAppend(cleanVideoFrame);
                     } else if (mediaSource && mediaSource.readyState === 'open') {
-                        // sourceopen already fired but SourceBuffer not created yet
-                        // — create it now and append immediately
                         try {
-                            sourceBuffer = mediaSource.addSourceBuffer(mimeType);
-                            sourceBuffer.addEventListener('updateend', onUpdateEnd);
-                            log(`SourceBuffer created: ${mimeType}`, "info");
+                            createSourceBuffer(mimeType); // ← always use helper
                             safeAppend(cleanVideoFrame);
                         } catch(e) {
                             log(`Failed to create SourceBuffer: ${e.message}`, "error");
                         }
                     } else {
-                        // sourceopen hasn't fired yet — store and let sourceopen handler drain it
                         log("sourceopen not yet fired — queuing init segment.", "info");
                         pendingInitSegment = { data: cleanVideoFrame, mimeType };
                     }
                     return;
                 }
 
-                // Regular cluster frame — just append
                 safeAppend(cleanVideoFrame);
             };
 
@@ -544,7 +543,6 @@
             latencyDisplay.style.color = "var(--text-muted)";
         }
 
-        // Wire up button after all functions are defined
         document.getElementById('connectBtn').addEventListener('click', initViewer);
     });
 </script>
