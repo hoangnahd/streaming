@@ -142,8 +142,7 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
     }
 
     @Override
-    public void afterConnectionClosed(@NonNull WebSocketSession session,
-                                      @NonNull CloseStatus status) {
+    public void afterConnectionClosed(@NonNull WebSocketSession session, @NonNull CloseStatus status) {
 
         sessionRegistry.removeSession(session.getId());
 
