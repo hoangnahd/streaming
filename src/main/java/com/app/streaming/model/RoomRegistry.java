@@ -1,11 +1,12 @@
 package com.app.streaming.model;
 
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 
-@Service
+@Component
 public class RoomRegistry {
     private ConcurrentHashMap<String, StreamingRoom> rooms = new ConcurrentHashMap<>();
 
@@ -29,5 +30,9 @@ public class RoomRegistry {
     public void removeRoom(StreamingRoom room) {
         rooms.remove(room);
     }
+    public List<StreamingRoom> getAllRooms() {
+        return this.rooms.values().stream().toList();
+    }
+    
 }
 

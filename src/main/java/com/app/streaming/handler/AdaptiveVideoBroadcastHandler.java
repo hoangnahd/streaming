@@ -1,5 +1,7 @@
 package com.app.streaming.handler;
 
+import com.app.streaming.ScheduledTaskManager;
+import com.app.streaming.DTO.ClientInfo;
 import com.app.streaming.model.BroadcastSink;
 import com.app.streaming.model.RoomRegistry;
 import com.app.streaming.model.SessionRegistry;
@@ -16,18 +18,15 @@ import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.BinaryWebSocketHandler;
+import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
 
-import java.io.IOException;
 import java.net.URI;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
@@ -35,52 +34,23 @@ import java.util.stream.Collectors;
 public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
     private final Logger log = Logger.getLogger(AdaptiveVideoBroadcastHandler.class.getName());
 
-    private final Map<String, ScheduledFuture<?>> reconnectTimers = new ConcurrentHashMap<>();
-    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+    private final ScheduledTaskManager scheduledTaskManager;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private static final long RECONNECT_DEBOUNCE_MS = 200;
     private static final String FORCE_RECONNECT_SIGNAL = "{\"event\":\"FORCE_RECONNECT\"}";
-    private static final String STREAM_RESTARTED_SIGNAL = "{\"event\":\"STREAM_RESTARTED\"}";
+    private static final String STREAM_RESTARTED_SIGNAL = "{\"event\":\"FORCE_RESTARTED\"}";
 
     private final SessionRegistry sessionRegistry;
     private final BroadcastSink broadcastSink;
     private final RoomRegistry roomRegistry;
 
-    public AdaptiveVideoBroadcastHandler(SessionRegistry sessionRegistry, BroadcastSink broadcastSink, RoomRegistry roomRegistry) {
+    public AdaptiveVideoBroadcastHandler(SessionRegistry sessionRegistry, BroadcastSink broadcastSink, RoomRegistry roomRegistry, ScheduledTaskManager scheduledTaskManager) {
         this.sessionRegistry = sessionRegistry;
         this.broadcastSink = broadcastSink;
         this.roomRegistry = roomRegistry;
+        this.scheduledTaskManager = scheduledTaskManager;
     }
 
-    private void scheduleReconnect(StreamingClient camera) {
-        String cameraId = camera.getSessionId();
-
-        // Cancel existing timer — reset the debounce window
-        cancelReconnectTimer(cameraId);
-
-        ScheduledFuture<?> future = scheduler.schedule(() -> {
-            reconnectTimers.remove(cameraId);
-            WebSocketSession camSession = camera.getSession();
-            if (camSession != null && camSession.isOpen()) {
-                try {
-                    log.info("[Handler] Forcing camera reconnect: " + cameraId);
-                    camSession.sendMessage(new TextMessage(FORCE_RECONNECT_SIGNAL));
-                } catch (IOException e) {
-                    log.warning("[Handler] Failed to send FORCE_RECONNECT: " + e.getMessage());
-                }
-            }
-        }, RECONNECT_DEBOUNCE_MS, TimeUnit.MILLISECONDS);
-        
-        reconnectTimers.put(cameraId, future);
-    }
-
-    private void cancelReconnectTimer(String cameraId) {
-        ScheduledFuture<?> existing = reconnectTimers.remove(cameraId);
-        if (existing != null) {
-            existing.cancel(false);
-        }
-    }
 
     private String extractRoomIdFromPath(String path) {
         if (path == null || !path.contains("/stream/")) {
@@ -106,7 +76,8 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
     }
     
     @Override
-    public void afterConnectionEstablished(WebSocketSession session) throws Exception {
+    public void afterConnectionEstablished(WebSocketSession rawSession) throws Exception {
+        WebSocketSession session = new ConcurrentWebSocketSessionDecorator(rawSession, 5000 /* send timeout ms */, 65536 /* buffer size bytes */);
         if (!session.isOpen() || session.getUri() == null) return;
 
         URI uri = session.getUri();
@@ -135,47 +106,35 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
         }
 
         // 5. Initialize the newly redesigned StreamingClient
-        StreamingClient newClient = new StreamingClient(
-            session, 
-            roomId, 
-            isCameraEnabled, 
-            isMicrophoneEnabled
-        );
-        // Regist new client
+        StreamingClient newClient = new StreamingClient(session, roomId, isCameraEnabled, isMicrophoneEnabled);
+         // Register new client
         sessionRegistry.registerClient(newClient);
-        // Add newClient
         boolean isSuccess = room.addMember(newClient);
-        if(!isSuccess) {
-            session.close();
-            return;
-        }
-        // Get list of session active camera exclude curren session
-        List<StreamingClient> cameras = sessionRegistry.getClientsByRoomId(roomId).stream()
-                .filter(client -> client.isCameraEnabled() && !client.getSessionId().equals(session.getId()))
-                .toList();
-        
-        // Camera exists — schedule a forced reconnect (debounced)
-        if (!cameras.isEmpty()) {
-            cameras.forEach(camera -> {
-                scheduleReconnect(camera);
-                log.info("[Handler] Viewer joined — reconnect scheduled for camera: "
-                    + camera.getSessionId());
-            });
-        }
+        if (!isSuccess) { session.close(); return; }
 
-        // Determine if cam is active
-        if (newClient.isCameraEnabled()) {
-            newClient.clearHeaderCache();
-            // Broadcast restarted signal
-            broadcastSink.sendTextMessage(session.getId(), roomId, new TextMessage(STREAM_RESTARTED_SIGNAL));
+        // 1. SESSION_ID first
+        session.sendMessage(new TextMessage(
+            objectMapper.writeValueAsString(Map.of("type", "SESSION_ID", "id", session.getId()))
+        ));
+
+        // 2. Participant list to ALL — this renders cards on every client
+        List<ClientInfo> allClients = room.getAllClients().stream().map(ClientInfo::new).toList();
+        broadcastSink.broadcastTextMessage("none", roomId,
+            new TextMessage(objectMapper.writeValueAsString(allClients)));
+
+        // 3. Replay cached init segments to the new client ONLY
+        //    TCP ordering guarantees this arrives after the participant list above
+        List<StreamingClient> existingCameras = room.getAllClients().stream()
+            .filter(c -> !c.getId().equals(newClient.getId()))
+            .filter(StreamingClient::isCameraEnabled)
+            .toList();
+
+        for (StreamingClient camera : existingCameras) {
+            camera.getSession().sendMessage(new TextMessage(STREAM_RESTARTED_SIGNAL));
+            log.info("[Handler] Sent restart signal to " + camera.getId() + " due to new joiner " + newClient.getId());
         }
-        // Logging to terminal
-        log.info(
-            "\n[Handler] Client: " + newClient.getSessionId() + 
-            "\nJoined with camStatus: " + newClient.isCameraEnabled() + 
-            "\nSession id: " + session.getId()
-        );
     }
+// Remove scheduleStreamResetForClients — no longer needed
     @Override
     public void handleTextMessage(WebSocketSession session, TextMessage message) {
         String payload = message.getPayload();
@@ -193,15 +152,28 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
                 boolean video = json.path("video").asBoolean(false);
                 boolean mic   = json.path("mic").asBoolean(false);
 
-                String roomId = extractRoomIdFromPath(session.getUri().getPath());
+                StreamingClient client = sessionRegistry.getClientById(session.getId());
+                if (client == null) {
+                    session.close(CloseStatus.POLICY_VIOLATION);
+                    return;
+                }
+
+                String roomId = client.getRoomId();
                 StreamingRoom room = roomRegistry.findRoom(roomId);
-                if (room == null) return;
-
-                StreamingClient client = room.getMemberById(session.getId());
-                if (client == null) return;
-
+                if (room == null) {
+                    session.close(CloseStatus.POLICY_VIOLATION);
+                    return;
+                }
+                
+                // Update config
                 client.setCameraEnabled(video);
                 client.setMicrophoneEnabled(mic);
+
+                // Get list of session clients and active camera
+                List<ClientInfo> clients = room.getAllClients().stream().map(ClientInfo::new).toList();
+
+                String jsonPayload = objectMapper.writeValueAsString(clients);
+                broadcastSink.broadcastTextMessage("none", roomId, new TextMessage(jsonPayload));
 
                 log.info("[Handler] Config updated for " + session.getId() 
                     + " — video=" + video + " mic=" + mic);
@@ -211,47 +183,51 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
         }
     }
     
+    private final ConcurrentHashMap<String, byte[]> initSegmentCache = new ConcurrentHashMap<>();
+    private static final byte[] WEBM_MAGIC = {0x1A, 0x45, (byte)0xDF, (byte)0xA3};
+
     @Override
-    public void handleBinaryMessage(WebSocketSession session,
-                                    @NonNull BinaryMessage message) throws Exception {
-
+    public void handleBinaryMessage(WebSocketSession session, BinaryMessage message) throws Exception {
         StreamingClient client = sessionRegistry.getClientById(session.getId());
-        // Guard 1: Safety check if client registry isn't fully ready yet
-        if (client == null) {
-            session.close(CloseStatus.POLICY_VIOLATION);
-            return;
-        }
+        if (client == null) { session.close(CloseStatus.POLICY_VIOLATION); return; }
 
-        if(!client.isCameraEnabled())
-            return;
-
-        // Guard 3: Validate Room Presence securely
         StreamingRoom room = roomRegistry.findRoom(client.getRoomId());
-        if (room == null || !room.isMemberPresent(client.getSessionId())) {
-            session.close(CloseStatus.POLICY_VIOLATION);
-            return;
-        }
-        
-        // Payload length must greater than 8
+        if (room == null) { session.close(CloseStatus.POLICY_VIOLATION); return; }
+
+        if (!client.isCameraEnabled()) return;
+
         ByteBuffer payload = message.getPayload();
-        if (payload.remaining() <= 8) {
-            log.warning("[Handler] Payload too short, dropping: " + session.getId());
-            return;
-        }
+        if (payload.remaining() <= 8) return;
+
         byte[] raw = new byte[payload.remaining()];
         payload.get(raw);
-        // Caching header
-        if(client.getInitializationHeaderSegment() == null) {
-            client.setInitializationHeaderSegment(raw);
+
+        // raw = [8-byte timestamp][webm data]
+        // Cache if this is a WebM init segment
+        if (raw.length > 12) {
+            byte[] webm = Arrays.copyOfRange(raw, 8, raw.length);
+            if (webm[0] == WEBM_MAGIC[0] && webm[1] == WEBM_MAGIC[1]
+            && webm[2] == WEBM_MAGIC[2] && webm[3] == WEBM_MAGIC[3]) {
+                initSegmentCache.put(session.getId(), raw);
+                log.info("[Handler] Init segment cached for: " + session.getId());
+            }
         }
 
-        // 3. Broadcast ALWAYS runs, even if detector failed
-        broadcastSink.sendBinaryMessage(session.getId(), room.getId(), new BinaryMessage(raw));
+        byte[] senderId = session.getId().getBytes(StandardCharsets.UTF_8);
+        ByteBuffer framed = ByteBuffer.allocate(4 + senderId.length + raw.length);
+        framed.putInt(senderId.length);
+        framed.put(senderId);
+        framed.put(raw);
+        framed.flip();
+
+        broadcastSink.broadcastBinaryMessage(session.getId(), room.getId(), new BinaryMessage(framed));
     }
 
     @Override
     public void afterConnectionClosed(@NonNull WebSocketSession session, @NonNull CloseStatus status) throws Exception {
         String sessionId = session.getId();
+        initSegmentCache.remove(session.getId());
+        // ... rest of existing disconnect logic
         // 1. Fetch first, THEN remove to fix the NullPointerException crash
         StreamingClient client = sessionRegistry.getClientById(sessionId);
         sessionRegistry.removeSession(sessionId);
@@ -270,6 +246,12 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
             if (room.getCurrentSize() == 0) {
                 roomRegistry.removeRoom(room);
                 log.info("[Handler] Empty room destroyed cleanly: " + room.getId());
+            } else {
+                // Get list of session clients and active camera
+                List<ClientInfo> clients = room.getAllClients().stream().map(ClientInfo::new).toList();
+
+                String jsonPayload = objectMapper.writeValueAsString(clients);
+                broadcastSink.broadcastTextMessage("none", room.getId(), new TextMessage(jsonPayload));
             }
         }
         log.info(String.format("[Handler] Connection closed: %s | Reason code: %d (%s)", 
