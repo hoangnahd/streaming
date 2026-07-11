@@ -6,9 +6,9 @@ import org.springframework.web.bind.annotation.GetMapping;
 @Controller
 public class ViewerController {
     
-    @GetMapping("/camViewer")
+    @GetMapping("/dashboard")
     public String getCamViewer() {
-        return "CamViewer";
+        return "dashboard";
     }
 
     @GetMapping("/viewer")

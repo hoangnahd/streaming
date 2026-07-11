@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamSpace Live Room</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .btn-transition {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        /* Custom video mirroring for local participant */
+        .mirror-video {
+            transform: scaleX(-1);
+        }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-50 h-screen flex flex-col font-sans antialiased overflow-hidden">
+
+    <header class="border-b border-zinc-900 bg-zinc-900/40 backdrop-blur-md px-6 py-3 shrink-0 flex items-center justify-between z-10">
+        <div class="flex items-center gap-4">
+            <div class="flex items-center gap-2">
+                <span class="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <h1 class="text-sm font-semibold tracking-wide text-zinc-200">
+                    Room: <span class="font-mono text-zinc-400" th:text="${roomId}">ROOM-ID-FALLBACK</span>
+                </h1>
+            </div>
+            <div class="h-4 w-px bg-zinc-800 hidden sm:block"></div>
+            <div class="text-xs text-zinc-500 hidden sm:flex items-center gap-2">
+                <i class="fa-solid fa-users text-zinc-400"></i>
+                <span id="participantCount">1 Participant Active</span>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3 text-xs">
+            <span id="netStatus" class="bg-zinc-900 border border-zinc-800 px-2.5 py-1 rounded-md font-medium text-zinc-400">
+                Pipeline: Connected
+            </span>
+            <span id="chunkCountBadge" class="bg-indigo-950/40 border border-indigo-900 text-indigo-400 px-2.5 py-1 rounded-md font-mono hidden sm:inline-block">
+                Packets: <span id="chunkCount">0</span>
+            </span>
+        </div>
+    </header>
+
+    <main class="flex-1 w-full p-4 md:p-6 flex flex-col justify-center items-center overflow-hidden relative">
+        
+        <div id="participantsGrid" class="w-full h-full max-w-7xl transition-all duration-300 grid gap-4 items-center justify-center content-center grid-cols-1">
+            
+            <div id="card-local" data-participant-id="local" onclick="handleCardFocus('local')" class="btn-transition relative w-full h-full bg-zinc-900/50 border border-zinc-800/80 rounded-2xl overflow-hidden shadow-xl flex items-center justify-center cursor-pointer group hover:border-zinc-700">
+                
+                <video id="localVideo" autoplay playsinline muted class="w-full h-full object-cover mirror-video hidden"></video>
+                
+                <div id="avatar-local" class="flex flex-col items-center gap-4 transition-all duration-300">
+                    <div class="h-20 w-20 rounded-full bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center text-zinc-400 shadow-inner group-hover:scale-105 transition-transform">
+                        <i class="fa-solid fa-user text-3xl"></i>
+                    </div>
+                    <span class="text-xs font-medium tracking-wide text-zinc-500 bg-zinc-950 px-3 py-1 rounded-full border border-zinc-900">Your feed is muted</span>
+                </div>
+
+                <div class="absolute bottom-4 left-4 bg-zinc-950/80 backdrop-blur-md border border-zinc-800/60 px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-2 shadow-md">
+                    <span class="font-medium text-zinc-200">You (Host)</span>
+                    <div class="flex items-center gap-1 text-zinc-400">
+                        <i id="indicator-local-cam" class="fa-solid fa-video-slash text-red-400"></i>
+                        <i id="indicator-local-mic" class="fa-solid fa-microphone-slash text-red-400"></i>
+                    </div>
+                </div>
+            </div>
+
+            </div>
+    </main>
+
+    <footer class="border-t border-zinc-900 bg-zinc-950 px-6 py-4 shrink-0 flex items-center justify-center relative z-10">
+        <div class="flex items-center gap-4">
+            
+            <button id="btnToggleCam" onclick="toggleLocalVideoTrack()" class="btn-transition h-12 w-12 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-400 flex items-center justify-center border border-red-500/20 cursor-pointer" title="Toggle Camera">
+                <i id="iconCam" class="fa-solid fa-video-slash text-base"></i>
+            </button>
+
+            <button id="btnToggleMic" onclick="toggleLocalAudioTrack()" class="btn-transition h-12 w-12 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-400 flex items-center justify-center border border-red-500/20 cursor-pointer" title="Toggle Microphone">
+                <i id="iconMic" class="fa-solid fa-microphone-slash text-base"></i>
+            </button>
+
+            <div class="h-6 w-px bg-zinc-800 mx-1"></div>
+
+            <button onclick="injectMockRemoteParticipant()" class="btn-transition h-12 px-4 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-400 flex items-center gap-2 cursor-pointer">
+                <i class="fa-solid fa-user-plus text-zinc-500"></i>
+                Simulate Join
+            </button>
+
+            <a th:href="@{/dashboard}" class="btn-transition h-12 px-5 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-950 text-sm font-semibold flex items-center gap-2 shadow-lg shadow-zinc-100/5">
+                <i class="fa-solid fa-phone-slash text-xs"></i>
+                Leave Room
+            </a>
+        </div>
+    </footer>
+
+    <script th:inline="javascript">
+        // Core Thymeleaf Asset Payload Binding Variables
+        const targetRoomId = /*[[${roomId}]]*/ 'test-room-id';
+        let isCamActive = /*[[${video}]]*/ false;
+        let isMicActive = /*[[${mic}]]*/ false;
+        let socket = null;
+        let mediaRecorder = null;
+        let chunkCount = 0;
+        let shouldAutoReconnect = false;
+
+        const chunkCountEl = document.getElementById('chunkCount');
+        const chunkBadge = document.getElementById('chunkCountBadge');
+        const netStatusEl = document.getElementById('netStatus');
+
+        // Internal State Orchestration Maps
+        let localStream = null;
+        let focusedParticipantId = null;
+        const participantsList = new Set(['local']); // Track active participants
+
+        // Capture Document Container Hooks
+        const gridContainer = document.getElementById('participantsGrid');
+        const countBadge = document.getElementById('participantCount');
+
+        /**
+         * System Entrypoint lifecycle hook
+         */
+        window.addEventListener('DOMContentLoaded', () => {
+            initializeHardwarePipeline();
+            // Automatically balance sizing based on current initial tracking limits
+            rebalanceParticipantLayoutGrid();
+            initializeWebSocketConnection();
+        });
+
+        function initializeWebSocketConnection() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.host;
+            const url = `${protocol}//${host}/stream/${targetRoomId}?video=${isCamActive}&mic=${isMicActive}`;
+
+            socket = new WebSocket(url);
+            socket.binaryType = 'arraybuffer';
+
+            socket.onopen = () => {
+                console.log('[WS] Connection established for room:', targetRoomId);
+                netStatusEl.textContent = 'Pipeline: Connected';
+                // If this was an auto-reconnect, restart streaming immediately
+                if (shouldAutoReconnect) {
+                    shouldAutoReconnect = false;
+                    if (localStream && isCamActive) startMediaRecorder();
+                }
+            };
+
+            socket.onmessage = (event) => {
+                if (typeof event.data !== 'string') return;
+                try {
+                    const signal = JSON.parse(event.data);
+                    if (signal.event === 'FORCE_RECONNECT') {
+                        console.log('[WS] FORCE_RECONNECT received — restarting.');
+                        shouldAutoReconnect = true;
+                        forceStopRecorder(() => socket.close());
+                    }
+                } catch (_) {
+                    // plain text signals
+                    if (event.data === 'FORCE_RECONNECT') {
+                        shouldAutoReconnect = true;
+                        forceStopRecorder(() => socket.close());
+                    }
+                }
+            };
+
+            socket.onclose = (e) => {
+                console.warn('[WS] Connection closed:', e.code);
+                netStatusEl.textContent = 'Pipeline: Reconnecting...';
+                if (shouldAutoReconnect) {
+                    shouldAutoReconnect = false;
+                    setTimeout(() => initializeWebSocketConnection(), 500);
+                    return;
+                }
+                netStatusEl.textContent = 'Pipeline: Disconnected';
+            };
+
+            socket.onerror = (err) => {
+                console.error('[WS] Error:', err);
+            };
+        }
+
+        function startMediaRecorder() {
+            if (!localStream || !isCamActive) return;
+            if (!socket || socket.readyState !== WebSocket.OPEN) return;
+
+            const mimeType = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp8', 'video/webm']
+                .find(t => MediaRecorder.isTypeSupported(t));
+
+            if (!mimeType) {
+                console.error('[Recorder] No supported MIME type');
+                return;
+            }
+
+            mediaRecorder = new MediaRecorder(localStream, {
+                mimeType,
+                videoBitsPerSecond: 2_500_000
+            });
+
+            mediaRecorder.ondataavailable = async (event) => {
+                if (!event.data || event.data.size === 0) return;
+                if (!socket || socket.readyState !== WebSocket.OPEN) return;
+
+                // Prepend 8-byte timestamp header — matches old page binary format
+                const header = new ArrayBuffer(8);
+                new DataView(header).setFloat64(0, Date.now());
+                const videoBuf = await event.data.arrayBuffer();
+                const combined = new Uint8Array(8 + videoBuf.byteLength);
+                combined.set(new Uint8Array(header), 0);
+                combined.set(new Uint8Array(videoBuf), 8);
+                socket.send(combined.buffer);
+
+                chunkCount++;
+                chunkCountEl.textContent = chunkCount;
+                chunkBadge.classList.remove('hidden');
+            };
+
+            mediaRecorder.start(100); // 100ms matches old page interval
+            console.log('[Recorder] Started:', mimeType);
+        }
+
+        // Stops recorder and fires callback only after final flush — prevents ws.close() race
+        function forceStopRecorder(onStopped) {
+            if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+                onStopped();
+                return;
+            }
+            mediaRecorder.addEventListener('stop', () => onStopped(), { once: true });
+            mediaRecorder.stop();
+        }
+        /**
+         * Initializes client hardware capabilities natively
+         */
+        async function initializeHardwarePipeline() {
+            if (!isCamActive && !isMicActive) {
+                updateLocalControlUIElements();
+                return;
+            }
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 1280, height: 720 },
+                    audio: true
+                });
+                localStream.getVideoTracks().forEach(t => t.enabled = isCamActive);
+                localStream.getAudioTracks().forEach(t => t.enabled = isMicActive);
+
+                document.getElementById('localVideo').srcObject = localStream;
+                updateLocalControlUIElements();
+
+                // Wait for socket to be open before starting — poll briefly
+                waitForSocketThenRecord();
+            } catch (err) {
+                console.error("Hardware pipeline rejected:", err);
+                isCamActive = false;
+                isMicActive = false;
+                updateLocalControlUIElements();
+            }
+        }
+
+        function waitForSocketThenRecord() {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                startMediaRecorder();
+                return;
+            }
+            // Socket still connecting — retry in 200ms
+            setTimeout(waitForSocketThenRecord, 200);
+        }
+        /**
+         * Toggles the user's local video track
+         */
+        function toggleLocalVideoTrack() {
+            isCamActive = !isCamActive;
+            if (localStream && localStream.getVideoTracks().length > 0) {
+                localStream.getVideoTracks().forEach(t => t.enabled = isCamActive);
+            } else if (isCamActive) {
+                initializeHardwarePipeline();
+                return;
+            }
+
+            if (!isCamActive && mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                mediaRecorder = null;
+            } else if (isCamActive && !mediaRecorder) {
+                waitForSocketThenRecord();
+            }
+
+            updateLocalControlUIElements();
+            sendConfigUpdate();
+        }
+
+        function sendConfigUpdate() {
+            if (!socket || socket.readyState !== WebSocket.OPEN) return;
+            const config = { type: 'CONFIG_UPDATE', video: isCamActive, mic: isMicActive };
+            socket.send(JSON.stringify(config));
+        }
+        /**
+         * Toggles the user's local audio track
+         */
+        function toggleLocalAudioTrack() {
+            isMicActive = !isMicActive;
+            if (localStream && localStream.getAudioTracks().length > 0) {
+                localStream.getAudioTracks().forEach(t => t.enabled = isMicActive);
+            }
+            updateLocalControlUIElements();
+        }
+
+        /**
+         * Updates buttons, overlays, and video visibilities based on current track state
+         */
+        function updateLocalControlUIElements() {
+            const btnCam = document.getElementById('btnToggleCam');
+            const iconCam = document.getElementById('iconCam');
+            const indCam = document.getElementById('indicator-local-cam');
+            const videoSurface = document.getElementById('localVideo');
+            const avatarBox = document.getElementById('avatar-local');
+
+            // Video Pipeline UI Mapping
+            if (isCamActive) {
+                btnCam.className = "btn-transition h-12 w-12 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 flex items-center justify-center border border-zinc-700/50 cursor-pointer";
+                iconCam.className = "fa-solid fa-video text-base";
+                indCam.className = "fa-solid fa-video text-emerald-400 text-[10px]";
+                videoSurface.classList.remove('hidden');
+                avatarBox.classList.add('hidden');
+            } else {
+                btnCam.className = "btn-transition h-12 w-12 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-400 flex items-center justify-center border border-red-500/20 cursor-pointer";
+                iconCam.className = "fa-solid fa-video-slash text-base";
+                indCam.className = "fa-solid fa-video-slash text-red-400 text-[10px]";
+                videoSurface.classList.add('hidden');
+                avatarBox.classList.remove('hidden');
+            }
+
+            // Audio Pipeline UI Mapping
+            const btnMic = document.getElementById('btnToggleMic');
+            const iconMic = document.getElementById('iconMic');
+            const indMic = document.getElementById('indicator-local-mic');
+
+            if (isMicActive) {
+                btnMic.className = "btn-transition h-12 w-12 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 flex items-center justify-center border border-zinc-700/50 cursor-pointer";
+                iconMic.className = "fa-solid fa-microphone text-base";
+                indMic.className = "fa-solid fa-microphone text-emerald-400 text-[10px]";
+            } else {
+                btnMic.className = "btn-transition h-12 w-12 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-400 flex items-center justify-center border border-red-500/20 cursor-pointer";
+                iconMic.className = "fa-solid fa-microphone-slash text-base";
+                indMic.className = "fa-solid fa-microphone-slash text-red-400 text-[10px]";
+            }
+        }
+
+        /**
+         * Orchestration Layout Grid Engine
+         * Implements dynamic resizing rules and handles the Click-to-Focus mechanics
+         */
+        function rebalanceParticipantLayoutGrid() {
+            const totalPeers = participantsList.size;
+            countBadge.innerText = `${totalPeers} Participant${totalPeers > 1 ? 's' : ''} Active`;
+
+            // Reset structural layout class overrides completely
+            gridContainer.className = "w-full h-full max-w-7xl transition-all duration-300 gap-4";
+            
+            // Loop through cards to wipe specific layout targeting rules safely
+            const allCards = gridContainer.querySelectorAll('[data-participant-id]');
+            allCards.forEach(card => {
+                card.className = "btn-transition relative w-full bg-zinc-900/50 border border-zinc-800/80 rounded-2xl overflow-hidden shadow-xl flex items-center justify-center cursor-pointer group hover:border-zinc-700";
+            });
+
+            // ── SCENARIO A: A card is actively focused (Hero Mode) ──
+            if (focusedParticipantId && participantsList.has(focusedParticipantId)) {
+                // Apply a split flex wrapper behavior: Hero occupies top/left, thumbs map below
+                gridContainer.classList.add('flex', 'flex-col', 'md:flex-row', 'items-stretch');
+                
+                // Create a secondary wrapper loop for the smaller side strip if missing
+                let strip = document.getElementById('thumbStripWindow');
+                if (!strip) {
+                    strip = document.createElement('div');
+                    strip.id = 'thumbStripWindow';
+                    strip.className = "flex md:flex-col gap-3 shrink-0 w-full md:w-64 h-32 md:h-full overflow-x-auto md:overflow-y-auto p-1";
+                    gridContainer.appendChild(strip);
+                } else {
+                    // Pull strip back into position just in case layout re-appended it out of bounds
+                    gridContainer.appendChild(strip);
+                }
+
+                allCards.forEach(card => {
+                    const pid = card.getAttribute('data-participant-id');
+                    if (pid === focusedParticipantId) {
+                        // Maximize the target hero container
+                        card.classList.add('flex-1', 'h-full', 'border-indigo-500/50', 'shadow-indigo-950/20');
+                        gridContainer.insertBefore(card, strip); // Position hero before thumb container strip
+                    } else {
+                        // Shrink siblings into thumbnail cards inside the scrolling tray window strip
+                        card.classList.add('w-44', 'md:w-full', 'h-full', 'md:h-36', 'shrink-0');
+                        strip.appendChild(card);
+                    }
+                });
+                return;
+            }
+
+            // ── SCENARIO B: Standard Balanced Layout Matrix (Grid Topology) ──
+            // Clean up old strip reference containers if present
+            const strip = document.getElementById('thumbStripWindow');
+            if (strip) strip.remove();
+
+            // Re-append all cards directly back inside root container grid tree bounds
+            allCards.forEach(card => gridContainer.appendChild(card));
+
+            gridContainer.classList.add('grid');
+            if (totalPeers === 1) {
+                gridContainer.classList.add('grid-cols-1', 'max-w-3xl', 'aspect-video');
+            } else if (totalPeers === 2) {
+                gridContainer.classList.add('grid-cols-1', 'md:grid-cols-2', 'max-w-5xl', 'h-auto', 'aspect-video');
+            } else if (totalPeers <= 4) {
+                gridContainer.classList.add('grid-cols-2', 'h-full');
+            } else {
+                gridContainer.classList.add('grid-cols-2', 'md:grid-cols-3', 'h-full');
+            }
+        }
+
+        /**
+         * Handles Click Interaction Event Handlers across participant matrix cards
+         */
+        function handleCardFocus(participantId) {
+            if (focusedParticipantId === participantId) {
+                // If clicking the current hero tile again, drop focus and balance the layout
+                focusedParticipantId = null;
+            } else {
+                // Elevate target id parameters to hero mode state
+                focusedParticipantId = participantId;
+            }
+            rebalanceParticipantLayoutGrid();
+        }
+
+        /**
+         * Testing Framework Utility: Dynamically injects a mock participant onto the UI
+         */
+        function injectMockRemoteParticipant() {
+            const mockId = 'peer-' + Math.random().toString(36).substring(2, 7);
+            participantsList.add(mockId);
+
+            const card = document.createElement('div');
+            card.setAttribute('data-participant-id', mockId);
+            card.onclick = () => handleCardFocus(mockId);
+            card.className = "btn-transition relative w-full bg-zinc-900/50 border border-zinc-800/80 rounded-2xl overflow-hidden shadow-xl flex items-center justify-center cursor-pointer group hover:border-zinc-700";
+
+            card.innerHTML = `
+                <div id="avatar-${mockId}" class="flex flex-col items-center gap-4 transition-all duration-300">
+                    <div class="h-20 w-20 rounded-full bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center text-zinc-500 shadow-inner group-hover:scale-105 transition-transform">
+                        <i class="fa-solid fa-user text-3xl"></i>
+                    </div>
+                    <span class="text-xs font-medium tracking-wide text-zinc-600 bg-zinc-950 px-3 py-1 rounded-full border border-zinc-900">User is connecting...</span>
+                </div>
+                <div class="absolute bottom-4 left-4 bg-zinc-950/80 backdrop-blur-md border border-zinc-800/60 px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-2 shadow-md">
+                    <span class="font-medium text-zinc-300">Remote Peer (${mockId.toUpperCase()})</span>
+                    <div class="flex items-center gap-1 text-zinc-500">
+                        <i class="fa-solid fa-video-slash text-xs"></i>
+                        <i class="fa-solid fa-microphone-slash text-xs"></i>
+                    </div>
+                </div>
+            `;
+
+            gridContainer.appendChild(card);
+            rebalanceParticipantLayoutGrid();
+        }
+    </script>
+</body>
+</html>

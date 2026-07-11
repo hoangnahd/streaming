@@ -1,6 +1,5 @@
-package com.app.streaming.broadcast;
+package com.app.streaming.model;
 
-import com.app.streaming.session.SessionRegistry;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.TextMessage;
@@ -9,6 +8,7 @@ import org.springframework.web.socket.WebSocketSession;
 import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 @Component
 public class BroadcastSink {
@@ -23,18 +23,14 @@ public class BroadcastSink {
         sessionRegistry.updateInitHeader(cameraSessionId, initHeader);
     }
 
-    public void sendInitHeaders(WebSocketSession session) {
+    public void sendInitHeaders(WebSocketSession session, String roomId) {
         // 1. Guard clause: Check if session is alive first before pulling headers
         if (!sessionRegistry.isSessionAlive(session.getId())) {
             System.out.println("[BroadcastSink] Session is not alive. | Cannot receive headers");
             return;
         }
 
-        List<byte[]> headers = sessionRegistry.getInitHeaders()
-                .stream()
-                .filter(Objects::nonNull)
-                .toList();
-
+        List<byte[]> headers = sessionRegistry.getInitHeaders(roomId);
         boolean hasHeader = headers.stream()
                 .anyMatch(Objects::nonNull);
         System.out.println("[BroadcastSink]: " + headers);
@@ -53,11 +49,10 @@ public class BroadcastSink {
         }
     }
 
-    public void sendBinaryMessage(String skipSessionId, BinaryMessage message) {
+    public void sendBinaryMessage(String skipSessionId, String roomId, BinaryMessage message) {
 
-        List<WebSocketSession> broadCastSession = sessionRegistry.getSessions();
-
-
+        List<WebSocketSession> broadCastSession = sessionRegistry.getSessions(roomId).stream()
+                                                    .filter(session -> !session.getId().equals(skipSessionId)).toList();
 
         if (!sessionRegistry.isSessionAlive(skipSessionId)) {
             System.out.println("[BroadcastSink] Sender is not alive.");
@@ -66,25 +61,22 @@ public class BroadcastSink {
         // Broadcast
         for(WebSocketSession session : broadCastSession) {
             try {
-                if(sessionRegistry.isSessionAlive(session.getId()) && !session.getId().equals(skipSessionId)) {
-//                    System.out.println("[Broadcast sink]: cam session id: " + skipSessionId);
-//                    System.out.println("[Broadcast sink]: viewer session id: " + session.getId());
-                    session.sendMessage(message);
-                }
+                session.sendMessage(message);
             } catch (Exception e) {
                 System.out.println("[BroadcastSink]: Fail streaming to viewer");
             }
         }
     }
 
-    public void sendTextMessage(String skipSessionId, TextMessage message) {
-        List<WebSocketSession> broadCastSession = sessionRegistry.getSessions();
+    public void sendTextMessage(String skipSessionId, String roomId, TextMessage message) {
+        // Filter session based on room id
+        List<WebSocketSession> broadCastSession = sessionRegistry.getSessions(roomId);
+
         // Broadcast
         for(WebSocketSession session : broadCastSession) {
             try {
-                if(sessionRegistry.isSessionAlive(session.getId()) && !session.getId().equals(skipSessionId)) {
+                if(!session.getId().equals(skipSessionId))
                     session.sendMessage(message);
-                }
             } catch (Exception e) {
                 System.out.println("[BroadcastSink]: Fail sending text to viewer");
             }

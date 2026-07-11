@@ -1,4 +1,4 @@
-package com.app.streaming.session;
+package com.app.streaming.model;
 
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.WebSocketSession;
@@ -10,13 +10,17 @@ public class SessionRegistry {
 
     private HashMap<String, StreamingClient> clients = new HashMap<>();
 
-    public List<StreamingClient> getClients() {
-        return clients.values().stream().toList();
+    public List<StreamingClient> getClientsByRoomId(String roomId) {
+        return clients.values().stream().filter(
+            client -> client.getRoomId().equals(roomId)
+        ).toList();
     }
 
     public StreamingClient getClientById(String sessionId) throws Exception {
         StreamingClient client = clients.get(sessionId);
-
+        if(client == null) {
+            throw new Exception("[Handler] Session haven't registered");
+        }
         if(!client.isOpen()) {
             throw new Exception("[Handler] Session is not alive");
         }
@@ -48,17 +52,20 @@ public class SessionRegistry {
     public void updateInitHeader(String sessionId, byte[] initHeader) {
         StreamingClient client = clients.get(sessionId);
         if (client != null) {
-            client.setInitHeaderSegment(initHeader);
+            client.setInitializationHeaderSegment(initHeader);
         }
     }
 
-    public List<WebSocketSession> getSessions() {
-        return this.clients.values().stream().map(StreamingClient::getSession)
-                .toList(); // Returns an unmodifiable List<StreamingClient>
+    public List<WebSocketSession> getSessions(String roomId) {
+        return this.clients.values().stream()
+            .filter(client -> {
+                return client != null && client.getRoomId().equals(roomId);
+            }).map(StreamingClient::getSession).toList();
     }
 
-    public List<byte[]> getInitHeaders() {
-        return this.clients.values().stream().map(StreamingClient::getInitHeaderSegment)
-                .toList(); // Returns an unmodifiable List<StreamingClient>
+    public List<byte[]> getInitHeaders(String roomId) {
+        return this.clients.values().stream().filter(client -> {
+            return client != null && client.getRoomId().equals(roomId);
+        }).map(StreamingClient::getInitializationHeaderSegment).toList();
     }
 }
