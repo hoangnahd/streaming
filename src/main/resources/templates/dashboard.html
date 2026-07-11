@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streaming Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* Custom smooth transition rule */
+        .btn-transition {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-50 min-h-screen flex flex-col font-sans antialiased">
+
+    <header class="border-b border-zinc-800/80 bg-zinc-900/50 backdrop-blur-md sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <div class="h-9 w-9 bg-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                <i class="fa-solid fa-tower-broadcast text-white text-lg"></i>
+            </div>
+            <span class="text-lg font-semibold tracking-wide bg-gradient-to-r from-zinc-50 to-zinc-400 bg-clip-text text-transparent">
+                StreamSpace
+            </span>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-4xl w-full mx-auto p-4 md:p-8 flex flex-col justify-center items-center gap-6">
+        
+        <div class="w-full bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4 md:p-6 shadow-2xl backdrop-blur-sm">
+            <div class="relative aspect-video w-full bg-zinc-950 rounded-xl overflow-hidden border border-zinc-800/50 shadow-inner flex items-center justify-center group">
+                
+                <video id="localPreview" autoplay playsinline muted class="w-full h-full object-cover hidden transform -scale-x-100"></video>
+                
+                <div id="previewPlaceholder" class="flex flex-col items-center gap-3 text-zinc-500 transition-opacity duration-300">
+                    <div class="h-16 w-16 bg-zinc-900 rounded-full flex items-center justify-center border border-zinc-800">
+                        <i class="fa-solid fa-video-slash text-2xl"></i>
+                    </div>
+                    <p class="text-sm font-medium tracking-wide">Camera Feed is Closed</p>
+                </div>
+
+                <div class="absolute top-4 left-4 flex gap-2">
+                    <span id="badgeCam" class="bg-zinc-900/80 backdrop-blur-md border border-zinc-700/50 px-2.5 py-1 rounded-md text-xs font-medium flex items-center gap-1.5 opacity-60">
+                        <span class="h-2 w-2 rounded-full bg-zinc-500" id="dotCam"></span> Cam Off
+                    </span>
+                    <span id="badgeMic" class="bg-zinc-900/80 backdrop-blur-md border border-zinc-700/50 px-2.5 py-1 rounded-md text-xs font-medium flex items-center gap-1.5 opacity-60">
+                        <span class="h-2 w-2 rounded-full bg-zinc-500" id="dotMic"></span> Mic Off
+                    </span>
+                </div>
+            </div>
+
+            <div class="mt-6 flex flex-wrap items-center justify-center gap-4">
+                
+                <button id="toggleCam" onclick="toggleCameraState()" class="btn-transition h-12 px-5 rounded-xl bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-sm font-medium flex items-center gap-2.5 border border-zinc-700/40 cursor-pointer">
+                    <i class="fa-solid fa-video" id="iconCam"></i>
+                    <span>Start Camera</span>
+                </button>
+
+                <button id="toggleMic" onclick="toggleMicrophoneState()" class="btn-transition h-12 px-5 rounded-xl bg-zinc-800 hover:bg-zinc-700 active:scale-95 text-sm font-medium flex items-center gap-2.5 border border-zinc-700/40 cursor-pointer">
+                    <i class="fa-solid fa-microphone" id="iconMic"></i>
+                    <span>Unmute Mic</span>
+                </button>
+
+                <button id="btnGenerateLink" onclick="generateStreamingLink()" class="btn-transition h-12 px-5 rounded-xl bg-emerald-600/90 hover:bg-emerald-500 text-emerald-50 font-medium text-sm flex items-center gap-2.5 shadow-lg shadow-emerald-600/10 ml-auto md:w-auto w-full justify-center cursor-pointer">
+                    <i class="fa-solid fa-link text-xs"></i>
+                    Generate Streaming Link
+                </button>
+            </div>
+        </div>
+
+    <div id="linkDisplayArea" class="w-full bg-zinc-900/60 border border-emerald-500/20 rounded-xl p-4 flex items-center justify-between gap-4 hidden opacity-0 transition-all duration-300 transform translate-y-2">
+        <div class="flex-1 min-w-0">
+            <p class="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1">Your Unique Streaming Link</p>
+            <p id="txtGeneratedLink" class="text-sm text-emerald-400 font-mono truncate select-all"></p>
+        </div>
+
+        <!-- action buttons grouped together -->
+        <div class="flex items-center gap-2 shrink-0">
+            <button onclick="copyLinkToClipboard()"
+                class="btn-transition h-10 w-10 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg flex items-center justify-center border border-zinc-700/50 cursor-pointer"
+                title="Copy Link">
+                <i class="fa-regular fa-copy" id="iconCopy"></i>
+            </button>
+
+            <button id="btnCreateRoom" onclick="handleCreateRoom()"
+                class="btn-transition h-10 w-10 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white rounded-lg flex items-center justify-center shadow-lg shadow-indigo-600/20 cursor-pointer"
+                title="Create Room">
+                <i class="fa-solid fa-arrow-right text-sm"></i>
+            </button>
+        </div>
+    </div>
+    </main>
+
+    <script th:inline="javascript">
+        // Dynamic Thymeleaf context asset extraction path
+        const createRoomEndpoint = /*[[@{/create/new/room}]]*/ '/create/new/room';
+
+        // Internal State Engine Tracking Variables
+        let localStream = null;
+        let isCamActive = false;
+        let isMicActive = false;
+
+        const videoElement = document.getElementById('localPreview');
+        const placeholder = document.getElementById('previewPlaceholder');
+
+        /**
+         * Core Media Utility: Handles native client webcam permissions and UI rendering toggles
+         */
+        async function updateMediaPipeline() {
+            // Close active streams if both hardware devices are switched off by user
+            if (!isCamActive && !isMicActive) {
+                if (localStream) {
+                    localStream.getTracks().forEach(track => track.stop());
+                    localStream = null;
+                }
+                videoElement.classList.add('hidden');
+                placeholder.classList.remove('opacity-0');
+                placeholder.classList.add('flex');
+                return;
+            }
+
+            try {
+                // Request live hardware system hooks via browser capabilities APIs
+                const constraints = { video: isCamActive, audio: isMicActive };
+                
+                // If a stream exists, stop tracks that are no longer needed
+                if (localStream) {
+                    localStream.getTracks().forEach(track => track.stop());
+                }
+
+                localStream = await navigator.mediaDevices.getUserMedia(constraints);
+                
+                if (isCamActive) {
+                    videoElement.srcObject = localStream;
+                    videoElement.classList.remove('hidden');
+                    placeholder.classList.add('opacity-0');
+                    placeholder.classList.remove('flex');
+                } else {
+                    videoElement.classList.add('hidden');
+                    placeholder.classList.remove('opacity-0');
+                    placeholder.classList.add('flex');
+                }
+            } catch (error) {
+                console.error("Hardware Permission Denied or Device Unavailable:", error);
+                alert("Failed to access media devices. Verify security permissions.");
+                isCamActive = false;
+                isMicActive = false;
+                renderButtonUIs();
+            }
+        }
+
+        function toggleCameraState() {
+            isCamActive = !isCamActive;
+            renderButtonUIs();
+            updateMediaPipeline();
+        }
+
+        function toggleMicrophoneState() {
+            isMicActive = !isMicActive;
+            renderButtonUIs();
+            updateMediaPipeline();
+        }
+
+        /**
+         * Updates all button colors, badges, and icon layouts dynamically based on state
+         */
+        function renderButtonUIs() {
+            // Camera Visual Mapping
+            const btnCam = document.getElementById('toggleCam');
+            const iconCam = document.getElementById('iconCam');
+            const badgeCam = document.getElementById('badgeCam');
+            const dotCam = document.getElementById('dotCam');
+
+            if (isCamActive) {
+                btnCam.className = "btn-transition h-12 px-5 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-950 font-medium text-sm flex items-center gap-2.5 cursor-pointer";
+                iconCam.className = "fa-solid fa-video text-zinc-900";
+                btnCam.querySelector('span').innerText = "Stop Camera";
+                badgeCam.className = "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-2.5 py-1 rounded-md text-xs font-medium flex items-center gap-1.5 opacity-100";
+                dotCam.className = "h-2 w-2 rounded-full bg-emerald-400 animate-pulse";
+                badgeCam.childNodes[2].textContent = " Cam Active";
+            } else {
+                btnCam.className = "btn-transition h-12 px-5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-medium text-sm flex items-center gap-2.5 border border-zinc-700/40 cursor-pointer";
+                iconCam.className = "fa-solid fa-video-slash text-zinc-400";
+                btnCam.querySelector('span').innerText = "Start Camera";
+                badgeCam.className = "bg-zinc-900/80 border border-zinc-800 text-zinc-500 px-2.5 py-1 rounded-md text-xs font-medium flex items-center gap-1.5 opacity-60";
+                dotCam.className = "h-2 w-2 rounded-full bg-zinc-600";
+                badgeCam.childNodes[2].textContent = " Cam Off";
+            }
+
+            // Microphone Visual Mapping
+            const btnMic = document.getElementById('toggleMic');
+            const iconMic = document.getElementById('iconMic');
+            const badgeMic = document.getElementById('badgeMic');
+            const dotMic = document.getElementById('dotMic');
+
+            if (isMicActive) {
+                btnMic.className = "btn-transition h-12 px-5 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-950 font-medium text-sm flex items-center gap-2.5 cursor-pointer";
+                iconMic.className = "fa-solid fa-microphone text-zinc-900";
+                btnMic.querySelector('span').innerText = "Mute Mic";
+                badgeMic.className = "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-2.5 py-1 rounded-md text-xs font-medium flex items-center gap-1.5 opacity-100";
+                dotMic.className = "h-2 w-2 rounded-full bg-emerald-400 animate-pulse";
+                badgeMic.childNodes[2].textContent = " Mic Active";
+            } else {
+                btnMic.className = "btn-transition h-12 px-5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-medium text-sm flex items-center gap-2.5 border border-zinc-700/40 cursor-pointer";
+                iconMic.className = "fa-solid fa-microphone-slash text-zinc-400";
+                btnMic.querySelector('span').innerText = "Unmute Mic";
+                badgeMic.className = "bg-zinc-900/80 border border-zinc-800 text-zinc-500 px-2.5 py-1 rounded-md text-xs font-medium flex items-center gap-1.5 opacity-60";
+                dotMic.className = "h-2 w-2 rounded-full bg-zinc-600";
+                badgeMic.childNodes[2].textContent = " Mic Off";
+            }
+        }
+
+        /**
+         * Asynchronous Post Fetch Request: Communicates with your exact Spring Boot endpoint API
+         */
+        async function fetchStreamingUrl() {
+            console.log({ video: isCamActive, mic: isMicActive })
+            const payload = { video: isCamActive, mic: isMicActive };
+            
+            const response = await fetch(createRoomEndpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                throw new Error("Server communication endpoint failure code " + response.status);
+            }
+            return await response.text();
+        }
+
+        /**
+         * Action A: Generates the link and updates the DOM to show it
+         */
+        async function generateStreamingLink() {
+            const btn = document.getElementById('btnGenerateLink');
+            try {
+                btn.disabled = true;
+                btn.innerHTML = `<i class="fa-solid fa-circle-notch animate-spin text-xs"></i> Generating...`;
+
+                const completeUrlString = await fetchStreamingUrl();
+                
+                const displayArea = document.getElementById('linkDisplayArea');
+                document.getElementById('txtGeneratedLink').innerText = completeUrlString;
+                
+                displayArea.classList.remove('hidden');
+                // Microtimeout to allow CSS transitions to trigger visually
+                setTimeout(() => {
+                    displayArea.classList.remove('opacity-0', 'translate-y-2');
+                    displayArea.classList.add('opacity-100', 'translate-y-0');
+                }, 50);
+
+            } catch (err) {
+                console.error(err);
+                alert("Could not generate stream token endpoint path.");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fa-solid fa-link text-xs"></i> Generate Streaming Link`;
+            }
+        }
+
+        /**
+         * Action B: Create Room Button — Programmatically handles instant server redirects
+         */
+        function handleCreateRoom() {
+            const btn = document.getElementById('btnCreateRoom');
+            try {
+                btn.disabled = true;
+                btn.innerHTML = `<i class="fa-solid fa-circle-notch animate-spin text-sm"></i>`;
+                
+                const targetRedirectUrl = document.getElementById('txtGeneratedLink').innerText;
+                // Redirect directly to the generated configuration string
+                window.location.href = targetRedirectUrl;
+            } catch (err) {
+                console.error(err);
+                alert("Failed to initialize session orchestration environment setup.");
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fa-solid fa-plus text-xs"></i> Create Room`;
+            }
+        }
+
+        function copyLinkToClipboard() {
+            const targetText = document.getElementById('txtGeneratedLink').innerText;
+            if (!targetText) return;
+
+            navigator.clipboard.writeText(targetText).then(() => {
+                const icon = document.getElementById('iconCopy');
+                icon.className = "fa-solid fa-check text-emerald-400";
+                setTimeout(() => {
+                    icon.className = "fa-regular fa-copy text-zinc-300";
+                }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>

@@ -18,7 +18,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
     }
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry.addHandler(handler, "/video-stream")
+        registry.addHandler(handler, "/stream/{roomId}")
                 .setAllowedOrigins("*");
     }
     @Bean

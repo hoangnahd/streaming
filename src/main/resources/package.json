@@ -1,0 +1,14 @@
+{
+  "name": "springboot-tailwind",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Tailwind CSS for Spring Boot",
+  "scripts": {
+    "watch": "tailwindcss -i ./static/input.css -o ./static/css/main.css --watch",
+    "build": "tailwindcss -i ./static/input.css -o ./static/css/main.css --minify"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.12",
+    "tailwindcss": "^4.1.12"
+  }
+}

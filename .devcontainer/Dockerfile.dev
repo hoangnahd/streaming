@@ -1,9 +1,0 @@
-FROM mcr.microsoft.com/devcontainers/java:3-25-trixie
-
-RUN echo "===== BUILDING CUSTOM DEV CONTAINER ====="
-
-RUN apt-get update && \
-    apt-get install -y \
-        ffmpeg \
-        git \
-    && rm -rf /var/lib/apt/lists/*
