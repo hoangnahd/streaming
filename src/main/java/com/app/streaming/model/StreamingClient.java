@@ -12,7 +12,6 @@ public class StreamingClient {
     private String roomId;
     private boolean cameraEnabled;
     private boolean microphoneEnabled;
-    private byte[] initializationHeaderSegment;
 
     // --- Constructor ---
     public StreamingClient(WebSocketSession session, String roomId, boolean cameraEnabled, boolean microphoneEnabled) {
@@ -20,7 +19,6 @@ public class StreamingClient {
         this.roomId = roomId;
         this.cameraEnabled = cameraEnabled;
         this.microphoneEnabled = microphoneEnabled;
-        this.initializationHeaderSegment = null;
     }
 
     // --- WebSocket Session Delegation Methods ---
@@ -28,7 +26,7 @@ public class StreamingClient {
         return this.session;
     }
 
-    public String getSessionId() {
+    public String getId() {
         return this.session.getId();
     }
 
@@ -62,19 +60,9 @@ public class StreamingClient {
         this.microphoneEnabled = microphoneEnabled;
     }
 
-    public byte[] getInitializationHeaderSegment() {
-        return this.initializationHeaderSegment;
-    }
+    // public byte[] getInitializationHeaderSegment() {
+    //     return this.initializationHeaderSegment;
+    // }
 
-    public void setInitializationHeaderSegment(byte[] initializationHeaderSegment) {
-        this.initializationHeaderSegment = initializationHeaderSegment;
-    }
 
-    // --- Business Logic Methods ---
-    /**
-     * Clears cached initialization stream media headers.
-     */
-    public void clearHeaderCache() {
-        this.initializationHeaderSegment = null;
-    }
 }

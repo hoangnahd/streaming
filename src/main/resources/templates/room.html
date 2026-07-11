@@ -104,6 +104,7 @@
         let mediaRecorder = null;
         let chunkCount = 0;
         let shouldAutoReconnect = false;
+        
 
         const chunkCountEl = document.getElementById('chunkCount');
         const chunkBadge = document.getElementById('chunkCountBadge');
@@ -113,6 +114,8 @@
         let localStream = null;
         let focusedParticipantId = null;
         const participantsList = new Set(['local']); // Track active participants
+        const remoteStreams = {};
+        const STREAM_RESTARTED_SIGNAL = 'STREAM_RESTARTED_SIGNAL'; // MUST match the exact literal value on the backend
 
         // Capture Document Container Hooks
         const gridContainer = document.getElementById('participantsGrid');
@@ -147,20 +150,42 @@
             };
 
             socket.onmessage = (event) => {
-                if (typeof event.data !== 'string') return;
+                console.log('[WS] message type:', typeof event.data, 
+                            event.data instanceof ArrayBuffer ? `binary ${event.data.byteLength}b` : event.data);
+
+                if (event.data instanceof ArrayBuffer) {
+                    const view = new DataView(event.data);
+                    const idLen = view.getInt32(0);
+                    console.log('[WS] binary — idLen:', idLen, 'total bytes:', event.data.byteLength);
+                    
+                    if (idLen <= 0 || idLen > 128) {
+                        console.error('[WS] Bad idLen — backend probably not sending framed format yet');
+                        return;
+                    }
+
+                    const senderId = new TextDecoder().decode(event.data.slice(4, 4 + idLen));
+                    const frame = event.data.slice(4 + idLen);
+                    console.log('[WS] senderId:', senderId, 'frame bytes:', frame.byteLength);
+
+                    handleRemoteFrame(senderId, frame);
+                    return;
+                }
+
+
                 try {
-                    const signal = JSON.parse(event.data);
-                    if (signal.event === 'FORCE_RECONNECT') {
-                        console.log('[WS] FORCE_RECONNECT received — restarting.');
-                        shouldAutoReconnect = true;
-                        forceStopRecorder(() => socket.close());
+                    const parsed = JSON.parse(event.data);
+                    if (parsed.event === 'FORCE_RESTARTED') {
+                        console.log('[WS] STREAM_RESTARTED — existing peer joined, restarting recorder');
+                        // forceStopRecorder(() => {
+                        //     if (isCamActive) startMediaRecorder(); // fresh MediaRecorder = fresh init segment
+                        // });
+                        rebootStreamSignal();
+                        return;
                     }
-                } catch (_) {
-                    // plain text signals
-                    if (event.data === 'FORCE_RECONNECT') {
-                        shouldAutoReconnect = true;
-                        forceStopRecorder(() => socket.close());
-                    }
+                    if (Array.isArray(parsed)) { syncParticipantList(parsed); return; }
+                    if (parsed.type === 'SESSION_ID') { localSessionId = parsed.id; return; }
+                } catch (e) {
+                    console.warn('[WS] Unhandled message:', event.data);
                 }
             };
 
@@ -180,10 +205,160 @@
             };
         }
 
-        function startMediaRecorder() {
-            if (!localStream || !isCamActive) return;
-            if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        function handleRemoteFrame(senderId, packet) {
+            if (packet.byteLength < 8) return;
 
+            const frame = packet.slice(8);
+
+            if (!remoteStreams[senderId]) {
+                const videoEl = document.getElementById(`video-${senderId}`);
+                if (!videoEl) {
+                    setTimeout(() => handleRemoteFrame(senderId, packet), 200);
+                    return;
+                }
+                bootRemoteMSE(senderId, videoEl);
+            }
+
+            const state = remoteStreams[senderId];
+            const webHeader = new Uint8Array(frame, 0, 4);
+            const isWebMHeader = webHeader[0] === 0x1A && webHeader[1] === 0x45
+                            && webHeader[2] === 0xDF && webHeader[3] === 0xA3;
+
+            if (isWebMHeader) {
+                const mimeType = detectRemoteCodecs(frame);
+
+                // ← KEY FIX: discard stale P-frames that arrived before this init segment
+                state.queue = [];
+
+                if (state.sourceBuffer) {
+                    safeRemoteAppend(senderId);
+                } else if (state.mediaSource?.readyState === 'open') {
+                    createRemoteSourceBuffer(senderId, mimeType);
+                    safeRemoteAppend(senderId, frame);
+                } else {
+                    state.pendingInitSegment = { data: frame, mimeType };
+                }
+                return;
+            }
+
+            safeRemoteAppend(senderId, frame);
+        }
+
+        function bootRemoteMSE(clientId, videoEl) {
+            const state = {
+                videoEl, mediaSource: null, sourceBuffer: null,
+                queue: [], pendingInitSegment: null,
+                hasAppendedMedia: false   // NEW
+            };
+            remoteStreams[clientId] = state;
+
+            state.mediaSource = new MediaSource();
+            videoEl.src = URL.createObjectURL(state.mediaSource);
+
+            state.mediaSource.addEventListener('sourceopen', () => {
+                if (state.pendingInitSegment) {
+                    createRemoteSourceBuffer(clientId, state.pendingInitSegment.mimeType);
+                    safeRemoteAppend(clientId, state.pendingInitSegment.data);
+                    state.pendingInitSegment = null;
+                }
+            });
+        }
+
+        function syncParticipantList(clients) {
+            const serverIds = new Set(clients.map(c => c.id));
+
+            // Remove participants no longer in the list
+            [...participantsList].forEach(pid => {
+                if (pid === 'local') return;
+                if (!serverIds.has(pid)) {
+                    participantsList.delete(pid);
+                    destroyRemoteStream(pid);
+                    document.querySelector(`[data-participant-id="${pid}"]`)?.remove();
+                }
+            });
+
+            // Add or update each participant from server
+            clients.forEach(client => {
+                if (client.id === localSessionId) return; // skip self
+
+                if (!participantsList.has(client.id)) {
+                    participantsList.add(client.id);
+                    injectRemoteParticipant(client);
+                } else {
+                    updateParticipantIndicators(client);
+                }
+            });
+
+            rebalanceParticipantLayoutGrid();
+        }
+
+        function createRemoteSourceBuffer(clientId, mimeType) {
+            const state = remoteStreams[clientId];
+            if (!state) return;
+            state.sourceBuffer = state.mediaSource.addSourceBuffer(mimeType);
+            state.sourceBuffer.addEventListener('updateend', () => {
+                if (!state.sourceBuffer.updating && state.queue.length > 0) {
+                    safeRemoteAppend(clientId, state.queue.shift());
+                }
+            });
+        }
+
+        function safeRemoteAppend(clientId, frame) {
+            const state = remoteStreams[clientId];
+            if (!state) return;
+            if (!state.mediaSource || state.mediaSource.readyState !== 'open'
+                || !state.sourceBuffer || state.sourceBuffer.updating || state.queue.length > 0) {
+                state.queue.push(frame);
+                return;
+            }
+            try {
+                state.sourceBuffer.appendBuffer(frame);
+            } catch (e) {
+                console.error(`[MSE:${clientId}] appendBuffer error:`, e);
+                state.queue.push(frame);
+            }
+        }
+
+        function resetRemoteMSE(clientId) {
+            const state = remoteStreams[clientId];
+            if (!state) return;
+            state.queue = [];
+            state.pendingInitSegment = null;
+            const videoEl = document.getElementById(`video-${clientId}`);
+            if (videoEl) {
+                videoEl.pause();
+                videoEl.removeAttribute('src');
+                videoEl.load();
+            }
+            bootRemoteMSE(clientId, videoEl);
+        }
+
+        // Store local session id when server sends it
+        let localSessionId = null;
+        function getLocalSessionId() { return localSessionId; }
+
+        function startMediaRecorder() {
+            // Check if stream exists and socket is ready
+            if (!localStream) {
+                console.warn('[Recorder] No local stream available.');
+                return;
+            }
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                console.warn('[Recorder] Socket not open.');
+                return;
+            }
+
+            // 🔴 1. THE CRUCIAL CLEANUP STEP
+            // If a recorder already exists from a previous session, kill it safely.
+            if (typeof mediaRecorder !== 'undefined' && mediaRecorder !== null) {
+                if (mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                }
+                // Wipe the old event listener so it stops sending ghost data to the socket
+                mediaRecorder.ondataavailable = null; 
+            }
+
+            // 2. Setup MIME Type (Your original logic here is perfect)
             const mimeType = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp8', 'video/webm']
                 .find(t => MediaRecorder.isTypeSupported(t));
 
@@ -192,31 +367,39 @@
                 return;
             }
 
+            // 3. Create the FRESH instance
             mediaRecorder = new MediaRecorder(localStream, {
                 mimeType,
-                videoBitsPerSecond: 2_500_000
+                videoBitsPerSecond: 2_500_000 // 2.5 Mbps
             });
 
+            // 4. Handle Data
             mediaRecorder.ondataavailable = async (event) => {
                 if (!event.data || event.data.size === 0) return;
                 if (!socket || socket.readyState !== WebSocket.OPEN) return;
 
-                // Prepend 8-byte timestamp header — matches old page binary format
+                // Prepend 8-byte timestamp header
                 const header = new ArrayBuffer(8);
                 new DataView(header).setFloat64(0, Date.now());
+                
                 const videoBuf = await event.data.arrayBuffer();
                 const combined = new Uint8Array(8 + videoBuf.byteLength);
+                
                 combined.set(new Uint8Array(header), 0);
                 combined.set(new Uint8Array(videoBuf), 8);
+                
                 socket.send(combined.buffer);
 
                 chunkCount++;
-                chunkCountEl.textContent = chunkCount;
-                chunkBadge.classList.remove('hidden');
+                if (typeof chunkCountEl !== 'undefined') {
+                    chunkCountEl.textContent = chunkCount;
+                    chunkBadge.classList.remove('hidden');
+                }
             };
 
-            mediaRecorder.start(100); // 100ms matches old page interval
-            console.log('[Recorder] Started:', mimeType);
+            // 5. Start!
+            mediaRecorder.start(100); 
+            console.log('[Recorder] Started freshly with:', mimeType);
         }
 
         // Stops recorder and fires callback only after final flush — prevents ws.close() race
@@ -270,22 +453,17 @@
          */
         function toggleLocalVideoTrack() {
             isCamActive = !isCamActive;
+            
             if (localStream && localStream.getVideoTracks().length > 0) {
                 localStream.getVideoTracks().forEach(t => t.enabled = isCamActive);
             } else if (isCamActive) {
+                // If no stream exists yet, the hardware pipeline handles the initial boot
                 initializeHardwarePipeline();
-                return;
-            }
-
-            if (!isCamActive && mediaRecorder && mediaRecorder.state !== 'inactive') {
-                mediaRecorder.stop();
-                mediaRecorder = null;
-            } else if (isCamActive && !mediaRecorder) {
-                waitForSocketThenRecord();
+                return; 
             }
 
             updateLocalControlUIElements();
-            sendConfigUpdate();
+            rebootStreamSignal(); // 🔄 Safely restarts the WebRTC/WebSocket signal
         }
 
         function sendConfigUpdate() {
@@ -298,10 +476,16 @@
          */
         function toggleLocalAudioTrack() {
             isMicActive = !isMicActive;
+            
             if (localStream && localStream.getAudioTracks().length > 0) {
                 localStream.getAudioTracks().forEach(t => t.enabled = isMicActive);
+            } else if (isMicActive && (!localStream || localStream.getAudioTracks().length === 0)) {
+                initializeHardwarePipeline();
+                return;
             }
+
             updateLocalControlUIElements();
+            rebootStreamSignal(); // 🔄 Safely restarts the WebRTC/WebSocket signal
         }
 
         /**
@@ -431,33 +615,86 @@
         /**
          * Testing Framework Utility: Dynamically injects a mock participant onto the UI
          */
-        function injectMockRemoteParticipant() {
-            const mockId = 'peer-' + Math.random().toString(36).substring(2, 7);
-            participantsList.add(mockId);
-
+        function injectRemoteParticipant(client) {
             const card = document.createElement('div');
-            card.setAttribute('data-participant-id', mockId);
-            card.onclick = () => handleCardFocus(mockId);
+            card.setAttribute('data-participant-id', client.id);
+            card.onclick = () => handleCardFocus(client.id);
             card.className = "btn-transition relative w-full bg-zinc-900/50 border border-zinc-800/80 rounded-2xl overflow-hidden shadow-xl flex items-center justify-center cursor-pointer group hover:border-zinc-700";
 
             card.innerHTML = `
-                <div id="avatar-${mockId}" class="flex flex-col items-center gap-4 transition-all duration-300">
-                    <div class="h-20 w-20 rounded-full bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center text-zinc-500 shadow-inner group-hover:scale-105 transition-transform">
+                <video id="video-${client.id}" 
+                    class="${client.video ? '' : 'hidden'} w-full h-full object-cover" 
+                    autoplay playsinline muted></video>
+                <div id="avatar-${client.id}" 
+                    class="${client.video ? 'hidden' : ''} flex flex-col items-center gap-4 transition-all duration-300">
+                    <div class="h-20 w-20 rounded-full bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center text-zinc-500 shadow-inner">
                         <i class="fa-solid fa-user text-3xl"></i>
                     </div>
-                    <span class="text-xs font-medium tracking-wide text-zinc-600 bg-zinc-950 px-3 py-1 rounded-full border border-zinc-900">User is connecting...</span>
+                    <span class="text-xs font-medium tracking-wide text-zinc-600 bg-zinc-950 px-3 py-1 rounded-full border border-zinc-900">Connecting...</span>
                 </div>
                 <div class="absolute bottom-4 left-4 bg-zinc-950/80 backdrop-blur-md border border-zinc-800/60 px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-2 shadow-md">
-                    <span class="font-medium text-zinc-300">Remote Peer (${mockId.toUpperCase()})</span>
+                    <span class="font-medium text-zinc-300">${client.id}</span>
                     <div class="flex items-center gap-1 text-zinc-500">
-                        <i class="fa-solid fa-video-slash text-xs"></i>
-                        <i class="fa-solid fa-microphone-slash text-xs"></i>
+                        <i id="ind-cam-${client.id}" class="fa-solid ${client.video ? 'fa-video text-emerald-400' : 'fa-video-slash text-red-400'} text-xs"></i>
+                        <i id="ind-mic-${client.id}" class="fa-solid ${client.mic ? 'fa-microphone text-emerald-400' : 'fa-microphone-slash text-red-400'} text-xs"></i>
                     </div>
                 </div>
             `;
 
             gridContainer.appendChild(card);
-            rebalanceParticipantLayoutGrid();
+
+        }
+
+        function destroyRemoteStream(clientId) {
+            delete remoteStreams[clientId];
+        }
+
+        function detectRemoteCodecs(buffer) {
+            const bytes = new Uint8Array(buffer);
+            for (let i = 0; i < bytes.length - 3; i++) {
+                if (bytes[i] === 0x56 && bytes[i+1] === 0x50 && bytes[i+2] === 0x39)
+                    return 'video/webm; codecs="vp9, opus"';
+                if (bytes[i] === 0x56 && bytes[i+1] === 0x50 && bytes[i+2] === 0x38)
+                    return 'video/webm; codecs="vp8, opus"';
+            }
+            return 'video/webm; codecs="vp9, opus"';
+        }
+
+        function updateParticipantIndicators(client) {
+            const camIcon = document.getElementById(`ind-cam-${client.id}`);
+            const micIcon = document.getElementById(`ind-mic-${client.id}`);
+            const videoEl = document.getElementById(`video-${client.id}`);
+            const avatarEl = document.getElementById(`avatar-${client.id}`);
+
+            if (camIcon) camIcon.className = `fa-solid ${client.video ? 'fa-video text-emerald-400' : 'fa-video-slash text-red-400'} text-xs`;
+            if (micIcon) micIcon.className = `fa-solid ${client.mic ? 'fa-microphone text-emerald-400' : 'fa-microphone-slash text-red-400'} text-xs`;
+
+            if (client.video) {
+                videoEl?.classList.remove('hidden');
+                avatarEl?.classList.add('hidden');
+            } else {
+                videoEl?.classList.add('hidden');
+                avatarEl?.classList.remove('hidden');
+                // Clean up MSE state if cam turned off
+                if (remoteStreams[client.id]) {
+                    delete remoteStreams[client.id];
+                }
+            }
+        }
+
+        /**
+         * Stops the current recorder, notifies peers, and restarts the signal.
+         * This guarantees a fresh WebM Init Segment is sent to all receivers.
+         */
+        function rebootStreamSignal() {
+            sendConfigUpdate(); 
+            
+            forceStopRecorder(() => {
+                // Only start generating a new stream if at least one device is active
+                if (isCamActive || isMicActive) {
+                    waitForSocketThenRecord();
+                }
+            });
         }
     </script>
 </body>

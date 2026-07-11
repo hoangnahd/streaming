@@ -11,7 +11,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
-import com.app.streaming.DTO.StreamConfig;
+import com.app.streaming.DTO.ClientInfo;
+import com.app.streaming.DTO.InitStreamConfig;
 import com.app.streaming.model.RoomRegistry;
 import com.app.streaming.model.StreamingRoom;
 
@@ -24,7 +25,7 @@ public class RoomController {
 
     @PostMapping("/create/new/room")
     @ResponseBody
-    public String createRoom(@RequestBody StreamConfig config) {
+    public String createRoom(@RequestBody InitStreamConfig config) {
         String roomId = roomRegistry.createRoom();
         String baseUrl = ServletUriComponentsBuilder.fromCurrentContextPath().toUriString();
 

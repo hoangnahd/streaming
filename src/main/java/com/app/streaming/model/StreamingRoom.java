@@ -1,5 +1,6 @@
 package com.app.streaming.model;
 
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class StreamingRoom {
@@ -13,10 +14,16 @@ public class StreamingRoom {
         return members.size() >= 2;
     }
 
+    public List<StreamingClient> getAllClients() {
+        return this.members.values().stream().toList();
+    }
+
     public boolean addMember(StreamingClient client) {
         if(isFull()) return false;
+
+        System.out.println("New member added");
         // Update member
-        members.put(client.getSessionId(), client);
+        members.put(client.getId(), client);
         return true;
     }
 

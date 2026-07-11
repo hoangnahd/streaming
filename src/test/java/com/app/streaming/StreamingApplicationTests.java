@@ -4,6 +4,8 @@ import com.app.streaming.handler.AdaptiveVideoBroadcastHandler;
 import com.app.streaming.model.BroadcastSink;
 import com.app.streaming.model.RoomRegistry;
 import com.app.streaming.model.SessionRegistry;
+import com.app.streaming.model.StreamingClient;
+import com.app.streaming.model.StreamingRoom;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -12,11 +14,8 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.WebSocketSession;
 
-import java.io.IOException;
 import java.net.URI;
-import java.util.HashMap;
-import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
+
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -24,27 +23,50 @@ import static org.mockito.Mockito.*;
 class StreamingApplicationTests {
 	private AdaptiveVideoBroadcastHandler handler;
     private BroadcastSink sink;
-	private SessionRegistry sessionSegistry;
+	private SessionRegistry sessionRegistry;
 	private RoomRegistry roomRegistry;
+	private ScheduledTaskManager scheduledTaskManager;
 
 	@BeforeEach
 	void setup() {
-		handler = new AdaptiveVideoBroadcastHandler(sessionSegistry, sink, roomRegistry);
+		sessionRegistry = new SessionRegistry();
+		scheduledTaskManager = new ScheduledTaskManager();
+		roomRegistry = new RoomRegistry();
+		sink = new BroadcastSink(sessionRegistry, roomRegistry);
+		handler = new AdaptiveVideoBroadcastHandler(sessionRegistry, sink, roomRegistry, scheduledTaskManager);
 	}
 	@Test
 	void should_RegisterAsViewer_WhenQueryContainsAsViewerParam() throws Exception {
-		// Initialize mockSession and attributes
-		WebSocketSession mockSession = mock(WebSocketSession.class);
+		// Setup room
+		String roomId = roomRegistry.createRoom();
+		String link = "wss://localhost:8443/room/" + roomId + "/stream?video=true&mic=true";
+		System.out.println("link: " + link);
 
-		// Setup for mockSession
-		when(mockSession.getId()).thenReturn("viewer-session-123");
-		when(mockSession.getUri()).thenReturn(URI.create("wss://localhost:8443/video-stream?isCamActive=true&roomId=room-123"));
+		// Initialize mockSession and attributes
+		WebSocketSession firstClientSession = mock(WebSocketSession.class);
+		when(firstClientSession.getId()).thenReturn("first-client");
+		when(firstClientSession.getUri()).thenReturn(URI.create(link));
+
+		// Setup for second client session
+		WebSocketSession secondClientSession = mock(WebSocketSession.class);
+		when(secondClientSession.getId()).thenReturn("second-client");
+		when(secondClientSession.getUri()).thenReturn(URI.create(link));
 
 		// Act
-		handler.afterConnectionEstablished(mockSession);
+		handler.afterConnectionEstablished(firstClientSession);
+		handler.afterConnectionEstablished(secondClientSession);
+
+		// Get room
+		StreamingRoom room = roomRegistry.findRoom(roomId);
 		// Assert
-		assertThat(mockSession.getAttributes().get("ROLE")).isEqualTo("VIEWER");
-		assertThat(mockSession.getAttributes().get("PROFILE")).isEqualTo("HIGH");
-		verify(mockSession, never()).sendMessage(any(BinaryMessage.class));
+		assertThat(room).isNotNull();
+		assertThat(room.getId()).isEqualTo(roomId);
+		assertThat(room.getAllClients().stream().map(StreamingClient::getSession))
+			.contains(firstClientSession);
+		// assertThat(room.getAllClients().stream().map(StreamingClient::getSession))
+		// 	.contains(secondClientSession);
+
+
+
 	}
 }

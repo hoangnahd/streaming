@@ -14,45 +14,47 @@ import java.util.stream.Collectors;
 public class BroadcastSink {
 
     private final SessionRegistry sessionRegistry;
+    private final RoomRegistry roomRegistry;
 
-    public BroadcastSink(SessionRegistry sessionRegistry) {
+    public BroadcastSink(SessionRegistry sessionRegistry, RoomRegistry roomRegistry) {
         this.sessionRegistry = sessionRegistry;
+        this.roomRegistry = roomRegistry;
     }
 
-    public void cacheInitHeader(String cameraSessionId, byte[] initHeader) {
-        sessionRegistry.updateInitHeader(cameraSessionId, initHeader);
-    }
+    // public void cacheInitHeader(String cameraSessionId, byte[] initHeader) {
+    //     sessionRegistry.updateInitHeader(cameraSessionId, initHeader);
+    // }
 
-    public void sendInitHeaders(WebSocketSession session, String roomId) {
-        // 1. Guard clause: Check if session is alive first before pulling headers
-        if (!sessionRegistry.isSessionAlive(session.getId())) {
-            System.out.println("[BroadcastSink] Session is not alive. | Cannot receive headers");
-            return;
-        }
+    // public void sendInitHeaders(WebSocketSession session, String roomId) {
+    //     // 1. Guard clause: Check if session is alive first before pulling headers
+    //     if (!sessionRegistry.isSessionAlive(session.getId())) {
+    //         System.out.println("[BroadcastSink] Session is not alive. | Cannot receive headers");
+    //         return;
+    //     }
 
-        List<byte[]> headers = sessionRegistry.getInitHeaders(roomId);
-        boolean hasHeader = headers.stream()
-                .anyMatch(Objects::nonNull);
-        System.out.println("[BroadcastSink]: " + headers);
+    //     List<byte[]> headers = sessionRegistry.getInitHeaders(roomId);
+    //     boolean hasHeader = headers.stream()
+    //             .anyMatch(Objects::nonNull);
+    //     System.out.println("[BroadcastSink]: " + headers);
 
-        if (!hasHeader) {
-            return; // Nothing to send
-        }
-        // 2. Clean, safe loop that handles IOException perfectly
-        try {
-            for (byte[] header : headers) {
-                session.sendMessage(new BinaryMessage(header));
-            }
-            System.out.println("[BroadcastSink] Successfully sent initialization headers to: " + session.getId());
-        } catch (IOException e) {
-            System.err.println("[BroadcastSink] Fail sending headers to " + session.getId() + ": " + e.getMessage());
-        }
-    }
+    //     if (!hasHeader) {
+    //         return; // Nothing to send
+    //     }
+    //     // 2. Clean, safe loop that handles IOException perfectly
+    //     try {
+    //         for (byte[] header : headers) {
+    //             session.sendMessage(new BinaryMessage(header));
+    //         }
+    //         System.out.println("[BroadcastSink] Successfully sent initialization headers to: " + session.getId());
+    //     } catch (IOException e) {
+    //         System.err.println("[BroadcastSink] Fail sending headers to " + session.getId() + ": " + e.getMessage());
+    //     }
+    // }
 
-    public void sendBinaryMessage(String skipSessionId, String roomId, BinaryMessage message) {
+    public void broadcastBinaryMessage(String skipSessionId, String roomId, BinaryMessage message) {
 
-        List<WebSocketSession> broadCastSession = sessionRegistry.getSessions(roomId).stream()
-                                                    .filter(session -> !session.getId().equals(skipSessionId)).toList();
+        List<WebSocketSession> broadCastSession = roomRegistry.findRoom(roomId).getAllClients().stream()
+                                                    .map(StreamingClient::getSession).toList();
 
         if (!sessionRegistry.isSessionAlive(skipSessionId)) {
             System.out.println("[BroadcastSink] Sender is not alive.");
@@ -61,25 +63,39 @@ public class BroadcastSink {
         // Broadcast
         for(WebSocketSession session : broadCastSession) {
             try {
-                session.sendMessage(message);
+                if(!session.getId().equals(skipSessionId))
+                    session.sendMessage(message);
             } catch (Exception e) {
-                System.out.println("[BroadcastSink]: Fail streaming to viewer");
-            }
+                    System.out.println("[BroadcastSink] send failed session=" + session.getId()
+                        + " type=" + e.getClass().getSimpleName() + " msg=" + e.getMessage());
+                }
         }
     }
 
-    public void sendTextMessage(String skipSessionId, String roomId, TextMessage message) {
+    public void broadcastTextMessage(String skipSessionId, String roomId, TextMessage message) {
         // Filter session based on room id
-        List<WebSocketSession> broadCastSession = sessionRegistry.getSessions(roomId);
+        List<WebSocketSession> broadCastSession = roomRegistry.findRoom(roomId).getAllClients().stream()
+                                                                .map(StreamingClient::getSession).toList();
 
         // Broadcast
         for(WebSocketSession session : broadCastSession) {
             try {
-                if(!session.getId().equals(skipSessionId))
+                if(skipSessionId.equals("none") || !session.getId().equals(skipSessionId))
                     session.sendMessage(message);
             } catch (Exception e) {
                 System.out.println("[BroadcastSink]: Fail sending text to viewer");
             }
         }
     }
+
+    // public void sendTextMessageTo(String sessionId, String roomId, TextMessage message) {
+    //    Stream = roomRegistry.findRoom(roomId);
+       
+    //      try {
+                
+    //             session.sendMessage(message);
+    //         } catch (Exception e) {
+    //             System.out.println("[BroadcastSink]: Fail sending text to viewer");
+    //         }
+    // }
 }
