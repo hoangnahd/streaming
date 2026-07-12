@@ -130,7 +130,9 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
             .toList();
 
         for (StreamingClient camera : existingCameras) {
-            camera.getSession().sendMessage(new TextMessage(STREAM_RESTARTED_SIGNAL));
+            camera.getSession().sendMessage(new TextMessage(
+                objectMapper.writeValueAsString(Map.of("event", "FORCE_RESTARTED"))
+            ));
             log.info("[Handler] Sent restart signal to " + camera.getId() + " due to new joiner " + newClient.getId());
         }
     }
