@@ -21,36 +21,6 @@ public class BroadcastSink {
         this.roomRegistry = roomRegistry;
     }
 
-    // public void cacheInitHeader(String cameraSessionId, byte[] initHeader) {
-    //     sessionRegistry.updateInitHeader(cameraSessionId, initHeader);
-    // }
-
-    // public void sendInitHeaders(WebSocketSession session, String roomId) {
-    //     // 1. Guard clause: Check if session is alive first before pulling headers
-    //     if (!sessionRegistry.isSessionAlive(session.getId())) {
-    //         System.out.println("[BroadcastSink] Session is not alive. | Cannot receive headers");
-    //         return;
-    //     }
-
-    //     List<byte[]> headers = sessionRegistry.getInitHeaders(roomId);
-    //     boolean hasHeader = headers.stream()
-    //             .anyMatch(Objects::nonNull);
-    //     System.out.println("[BroadcastSink]: " + headers);
-
-    //     if (!hasHeader) {
-    //         return; // Nothing to send
-    //     }
-    //     // 2. Clean, safe loop that handles IOException perfectly
-    //     try {
-    //         for (byte[] header : headers) {
-    //             session.sendMessage(new BinaryMessage(header));
-    //         }
-    //         System.out.println("[BroadcastSink] Successfully sent initialization headers to: " + session.getId());
-    //     } catch (IOException e) {
-    //         System.err.println("[BroadcastSink] Fail sending headers to " + session.getId() + ": " + e.getMessage());
-    //     }
-    // }
-
     public void broadcastBinaryMessage(String skipSessionId, String roomId, BinaryMessage message) {
 
         List<WebSocketSession> broadCastSession = roomRegistry.findRoom(roomId).getAllClients().stream()
@@ -88,14 +58,13 @@ public class BroadcastSink {
         }
     }
 
-    // public void sendTextMessageTo(String sessionId, String roomId, TextMessage message) {
-    //    Stream = roomRegistry.findRoom(roomId);
-       
-    //      try {
-                
-    //             session.sendMessage(message);
-    //         } catch (Exception e) {
-    //             System.out.println("[BroadcastSink]: Fail sending text to viewer");
-    //         }
-    // }
+    public void sendBinaryMessage(WebSocketSession session, BinaryMessage message) {
+        try {
+            if (session.isOpen()) {
+                session.sendMessage(message);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
 }

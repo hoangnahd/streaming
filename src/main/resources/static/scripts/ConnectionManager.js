@@ -1,71 +1,107 @@
-import { ConnState } from './state.js';
-
 /**
- * Owns the WebSocket. Nothing else in the app should touch `new WebSocket(...)`.
+ * ConnectionManager
+ * -----------------
+ * Owns the WebSocket, reconnects with exponential backoff (no reconnect
+ * storms), and turns raw ws messages into typed events so nothing else in
+ * the app touches `event.data` directly.
  *
- * Emits (via EventTarget, so any manager can `addEventListener` without a
- * hand-rolled pub/sub):
- *   'state-change'   { state }
- *   'open'
- *   'close'          { code, reason }
- *   'json-message'   parsed JSON payload
- *   'remote-packet'  { senderId, packet: ArrayBuffer }  (idLen framing already stripped)
+ * Binary wire format (unchanged from the original):
+ *   [ int32 idLen ][ idLen bytes: senderId ][ float64 timestamp ][ payload ]
+ *
+ * Consumers subscribe with addEventListener:
+ *   'statechange' -> ConnectionState
+ *   'open'        -> { reconnected: boolean }
+ *   'session'     -> localSessionId (string)
+ *   'participants'-> full participant array from the server
+ *   'force-restart' -> server asked everyone to restart (existing peer joined)
+ *   'frame'       -> { senderId, timestamp, payload: ArrayBuffer }
+ *   'error'       -> the raw WebSocket error event
  */
+
+export const ConnectionState = Object.freeze({
+  DISCONNECTED: 'DISCONNECTED',
+  CONNECTING: 'CONNECTING',
+  CONNECTED: 'CONNECTED',
+  RECONNECTING: 'RECONNECTING',
+});
+
+const BACKOFF_STEPS_MS = [1000, 2000, 4000, 8000, 16000, 30000];
+
 export class ConnectionManager extends EventTarget {
-  constructor({ roomId, getConnectParams, maxBackoffMs = 30000 }) {
+  /**
+   * @param {string} roomId
+   * @param {() => {video: boolean, mic: boolean}} getParams - read fresh
+   *   hardware state on every (re)connect attempt, not just the initial one.
+   */
+  constructor({ roomId, getParams }) {
     super();
     this.roomId = roomId;
-    this.getConnectParams = getConnectParams; // () => { video, mic }
-    this.maxBackoffMs = maxBackoffMs;
+    this.getParams = getParams;
+
     this.socket = null;
-    this.state = ConnState.DISCONNECTED;
-    this.reconnectAttempts = 0;
+    this.state = ConnectionState.DISCONNECTED;
+
+    this._reconnectAttempt = 0;
+    this._reconnectTimer = null;
     this._manualClose = false;
+    this._localSessionId = null;
+  }
+
+  get localSessionId() {
+    return this._localSessionId;
   }
 
   connect() {
     this._manualClose = false;
-    this._open();
+    this._openSocket();
   }
 
   disconnect() {
     this._manualClose = true;
+    this._clearReconnectTimer();
     this.socket?.close();
   }
 
-  /** Send a binary ArrayBuffer or JSON-serializable object. Returns false if not connected. */
-  send(payload) {
-    if (this.state !== ConnState.CONNECTED) return false;
-    this.socket.send(payload);
+  /** Send a pre-built binary frame (used by RecorderManager). */
+  send(buffer) {
+    if (this.state !== ConnectionState.CONNECTED) return false;
+    this.socket.send(buffer);
     return true;
   }
 
+  /** Send a JSON control message as a text frame. */
   sendJSON(obj) {
-    return this.send(JSON.stringify(obj));
+    if (this.state !== ConnectionState.CONNECTED) return false;
+    this.socket.send(JSON.stringify(obj));
+    return true;
   }
 
-  _open() {
-    this._setState(this.reconnectAttempts > 0 ? ConnState.RECONNECTING : ConnState.CONNECTING);
+  // --- internals -----------------------------------------------------
 
-    const { video, mic } = this.getConnectParams();
+  _openSocket() {
+    this._setState(this._reconnectAttempt > 0 ? ConnectionState.RECONNECTING : ConnectionState.CONNECTING);
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const { video, mic } = this.getParams();
     const url = `${protocol}//${window.location.host}/stream/${this.roomId}?video=${video}&mic=${mic}`;
 
     const socket = new WebSocket(url);
     socket.binaryType = 'arraybuffer';
+    this.socket = socket;
 
     socket.onopen = () => {
-      this.reconnectAttempts = 0;
-      this._setState(ConnState.CONNECTED);
-      this.dispatchEvent(new CustomEvent('open'));
+      const wasReconnect = this._reconnectAttempt > 0;
+      this._reconnectAttempt = 0;
+      this._setState(ConnectionState.CONNECTED);
+      this.dispatchEvent(new CustomEvent('open', { detail: { reconnected: wasReconnect } }));
     };
 
-    socket.onmessage = (event) => this._handleMessage(event);
+    socket.onmessage = (event) => this._dispatch(event.data);
 
-    socket.onclose = (e) => {
-      this.dispatchEvent(new CustomEvent('close', { detail: { code: e.code, reason: e.reason } }));
+    socket.onclose = () => {
+      this.socket = null;
       if (this._manualClose) {
-        this._setState(ConnState.DISCONNECTED);
+        this._setState(ConnectionState.DISCONNECTED);
         return;
       }
       this._scheduleReconnect();
@@ -74,48 +110,91 @@ export class ConnectionManager extends EventTarget {
     socket.onerror = (err) => {
       this.dispatchEvent(new CustomEvent('error', { detail: err }));
     };
-
-    this.socket = socket;
   }
 
   _scheduleReconnect() {
-    this._setState(ConnState.RECONNECTING);
-    const delay = Math.min(1000 * 2 ** this.reconnectAttempts, this.maxBackoffMs);
-    this.reconnectAttempts++;
-    this.dispatchEvent(new CustomEvent('reconnect-scheduled', { detail: { delay } }));
-    setTimeout(() => {
-      if (this._manualClose) return;
-      this._open();
-    }, delay);
+    this._setState(ConnectionState.RECONNECTING);
+    const delay = BACKOFF_STEPS_MS[Math.min(this._reconnectAttempt, BACKOFF_STEPS_MS.length - 1)];
+    this._reconnectAttempt++;
+    this._clearReconnectTimer();
+    this._reconnectTimer = setTimeout(() => this._openSocket(), delay);
+  }
+
+  _clearReconnectTimer() {
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
   }
 
   _setState(state) {
     this.state = state;
-    this.dispatchEvent(new CustomEvent('state-change', { detail: { state } }));
+    this.dispatchEvent(new CustomEvent('statechange', { detail: state }));
   }
 
-  _handleMessage(event) {
-    if (event.data instanceof ArrayBuffer) {
-      this._handleBinary(event.data);
+  _dispatch(data) {
+    if (data instanceof ArrayBuffer) {
+      this._dispatchBinary(data);
       return;
     }
+
     try {
-      this.dispatchEvent(new CustomEvent('json-message', { detail: JSON.parse(event.data) }));
+      const parsed = JSON.parse(data);
+
+      if (parsed.type === 'SESSION_ID') {
+        this._localSessionId = parsed.id;
+        this.dispatchEvent(new CustomEvent('session', { detail: parsed.id }));
+        return;
+      }
+      if (parsed.event === 'FORCE_RESTARTED') {
+        this.dispatchEvent(new CustomEvent('force-restart'));
+        return;
+      }
+      if (Array.isArray(parsed)) {
+        this.dispatchEvent(new CustomEvent('participants', { detail: parsed }));
+        return;
+      }
+
+      this.dispatchEvent(new CustomEvent('message', { detail: parsed }));
     } catch (e) {
-      console.warn('[Connection] Unhandled non-JSON message:', event.data);
+      console.warn('[ConnectionManager] Unhandled message:', data);
     }
   }
 
-  _handleBinary(buffer) {
-    if (buffer.byteLength < 4) return;
+  _dispatchBinary(buffer) {
     const view = new DataView(buffer);
     const idLen = view.getInt32(0);
-    if (idLen <= 0 || idLen > 128 || 4 + idLen > buffer.byteLength) {
-      console.error('[Connection] Bad idLen in binary frame:', idLen);
+
+    if (idLen <= 0 || idLen > 128) {
+      console.error('[ConnectionManager] Bad idLen in binary frame');
       return;
     }
+
     const senderId = new TextDecoder().decode(buffer.slice(4, 4 + idLen));
-    const packet = buffer.slice(4 + idLen);
-    this.dispatchEvent(new CustomEvent('remote-packet', { detail: { senderId, packet } }));
+    const envelope = buffer.slice(4 + idLen);
+    if (envelope.byteLength < 8) return;
+
+    const timestamp = new DataView(envelope).getFloat64(0);
+    const payload = envelope.slice(8);
+
+
+    const bytes = new Uint8Array(payload);
+
+    const first4 = [...bytes.slice(0, 4)]
+        .map(b => b.toString(16).padStart(2, "0"))
+        .join(" ");
+
+    const isHeader =
+        bytes.length >= 4 &&
+        bytes[0] === 0x1a &&
+        bytes[1] === 0x45 &&
+        bytes[2] === 0xdf &&
+        bytes[3] === 0xa3;
+
+    console.log(
+        `[Connection] recv ${isHeader ? "HEADER" : "MEDIA"} from ${senderId} first4=${first4}`
+    );
+
+    this.dispatchEvent(new CustomEvent('frame', { detail: { senderId, timestamp, payload } }));
   }
 }
