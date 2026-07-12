@@ -1,150 +1,228 @@
-import { RecorderState, ConnState } from './state.js';
+import { ConnectionState } from './ConnectionManager.js';
+
+/**
+ * RecorderManager
+ * ---------------
+ * One `state` field instead of the old restartPending / recorderStarting
+ * booleans. Started directly from ConnectionManager's 'open' event — there
+ * is no polling loop waiting for the socket.
+ *
+ * ondataavailable never awaits anything: it just pushes the Blob onto a
+ * queue and kicks a SenderLoop. The loop does the arrayBuffer() conversion,
+ * the split-header merge, and the socket.send() — so a slow encode/send
+ * cycle can never block MediaRecorder from firing its next chunk.
+ */
+
+export const RecorderState = Object.freeze({
+  STOPPED: 'STOPPED',
+  STARTING: 'STARTING',
+  RECORDING: 'RECORDING',
+  STOPPING: 'STOPPING',
+  WAITING_RECONNECT: 'WAITING_RECONNECT',
+});
 
 const MIME_CANDIDATES = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp8', 'video/webm'];
 
-/**
- * Owns the MediaRecorder and the local send pipeline.
- *
- * Two things this fixes vs. the original:
- *  - `ondataavailable` never awaits anything. It just pushes the Blob into a
- *    queue; a separate drain loop does the async arrayBuffer()+send() work.
- *    That keeps the recorder's own event loop from ever backing up.
- *  - One `state` field (RecorderState) instead of `restartPending` /
- *    `recorderStarting` booleans that could disagree with each other.
- *
- * Emits: 'state-change' { state }, 'chunk-sent' { count }
- */
 export class RecorderManager extends EventTarget {
-  constructor({ getConnection }) {
+  constructor(connectionManager) {
     super();
-    this.getConnection = getConnection; // () => ConnectionManager
+    this.connection = connectionManager;
     this.mediaRecorder = null;
-    this.localStream = null;
     this.state = RecorderState.STOPPED;
-    this.chunkCount = 0;
 
     this._sendQueue = [];
-    this._draining = false;
+    this._sending = false;
     this._waitingForInitHeader = true;
     this._pendingInitHeader = new Uint8Array(0);
+    this._pendingRestartHeader = new Uint8Array(0);
+    
+    // Generation counter for discarding stale chunks after restarts
+    this._generation = 0; 
   }
 
-  setStream(stream) {
-    this.localStream = stream;
-  }
+  start(stream) {
+    this._generation++; // Increment generation on every new start
+    
+    if (this.state === RecorderState.STARTING || this.state === RecorderState.RECORDING) return;
+    if (!stream) return;
 
-  start() {
-    if (!this.localStream) {
-      console.warn('[Recorder] No local stream available.');
+    if (this.connection.state !== ConnectionState.CONNECTED) {
+      this._setState(RecorderState.WAITING_RECONNECT);
       return;
-    }
-    if (this.state === RecorderState.STARTING || this.state === RecorderState.RECORDING) {
-      return; // already running — restart() is the way to force a fresh init segment
     }
 
     const mimeType = MIME_CANDIDATES.find((t) => MediaRecorder.isTypeSupported(t));
     if (!mimeType) {
-      console.error('[Recorder] No supported MIME type.');
+      console.error('[RecorderManager] No supported MIME type');
       return;
     }
 
-    this._setState(RecorderState.STARTING);
+    this._teardownRecorder();
     this._waitingForInitHeader = true;
     this._pendingInitHeader = new Uint8Array(0);
 
-    const recorder = new MediaRecorder(this.localStream, { mimeType, videoBitsPerSecond: 2_500_000 });
-    recorder.ondataavailable = (event) => this._onData(event);
-    recorder.onstart = () => this._setState(RecorderState.RECORDING);
-    recorder.onstop = () => this.dispatchEvent(new CustomEvent('stopped'));
-
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2_500_000 });
     this.mediaRecorder = recorder;
+    this._setState(RecorderState.STARTING);
+
+    recorder.ondataavailable = (event) => {
+      if (!event.data || event.data.size === 0) return;
+      this._sendQueue.push(event.data);
+      this._pumpSendLoop();
+    };
+
+    recorder.onstart = () => this._setState(RecorderState.RECORDING);
+    recorder.onstop = () => this._setState(RecorderState.STOPPED);
+
     recorder.start(100);
   }
 
-  /** Resolves once the recorder has fully stopped (mirrors forceStopRecorder's callback). */
   stop() {
     return new Promise((resolve) => {
-      if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') {
+      const recorder = this.mediaRecorder;
+      if (!recorder || recorder.state === 'inactive') {
         this._setState(RecorderState.STOPPED);
         resolve();
         return;
       }
       this._setState(RecorderState.STOPPING);
-      this.addEventListener('stopped', () => {
-        this.mediaRecorder.ondataavailable = null;
-        this._setState(RecorderState.STOPPED);
-        resolve();
-      }, { once: true });
-      this.mediaRecorder.stop();
+      recorder.addEventListener('stop', () => resolve(), { once: true });
+      recorder.stop();
     });
   }
 
-  /** Stop, then start fresh — guarantees a new WebM init segment reaches viewers. */
-  async restart() {
-    await this.stop();
-    this.start();
+  async restart(stream) {
+      if (this.state === RecorderState.STOPPING) return;
+
+      await this.stop();
+
+      // Reset everything, importantly _sending to unblock the pump loop
+      this._sendQueue.length = 0;
+      this._sending = false; 
+
+      this._waitingForInitHeader = true;
+      this._pendingInitHeader = new Uint8Array(0);
+
+      this.start(stream);
   }
 
-  _onData(event) {
-    if (!event.data || event.data.size === 0) return;
-    this._sendQueue.push(event.data);
-    this._drainQueue();
-  }
+  // --- internals -----------------------------------------------------
 
-  async _drainQueue() {
-    if (this._draining) return;
-    this._draining = true;
+  async _pumpSendLoop() {
+    if (this._sending) return;
+    this._sending = true;
+    
     while (this._sendQueue.length > 0) {
-      await this._sendBlob(this._sendQueue.shift());
+      const blob = this._sendQueue.shift();
+      await this._sendChunk(blob);
     }
-    this._draining = false;
+    
+    this._sending = false;
   }
 
-  async _sendBlob(blob) {
-    const connection = this.getConnection();
-    if (!connection || connection.state !== ConnState.CONNECTED) return;
-
+  async _sendChunk(blob) {
+    // Capture the generation BEFORE awaiting the arrayBuffer
+    const generation = this._generation; 
+    
     const buf = await blob.arrayBuffer();
+
+    // If the generation changed during the await, discard this chunk
+    if (generation !== this._generation) {
+        return; 
+    }
+
     let bytes = new Uint8Array(buf);
 
+    const first4 = [...bytes.slice(0, 4)]
+      .map(b => b.toString(16).padStart(2, "0"))
+      .join(" ");
+      
+    console.log(
+        "[Recorder raw]",
+        bytes.length,
+        [...bytes.slice(0, 8)].map(b => b.toString(16).padStart(2, "0")).join(" ")
+    );
+
+    const isHeader =
+        bytes.length >= 4 &&
+        bytes[0] === 0x1a &&
+        bytes[1] === 0x45 &&
+        bytes[2] === 0xdf &&
+        bytes[3] === 0xa3;
+
+    console.log(
+        `[Recorder] sending ${isHeader ? "HEADER" : "MEDIA"} (${bytes.length} bytes) first4=${first4}`
+    );
+
+    const cluster =
+      bytes.length >= 4 &&
+      bytes[0] === 0x1f &&
+      bytes[1] === 0x43 &&
+      bytes[2] === 0xb6 &&
+      bytes[3] === 0x75;
+
+    console.log(
+        "EBML =", isHeader,
+        "Cluster =", cluster,
+        "size =", bytes.length
+    );
+
     if (this._waitingForInitHeader) {
-      bytes = this._mergeInitHeader(bytes);
-      if (!bytes) return; // still accumulating a split init header
-    }
+        bytes = this._mergeInitHeader(bytes);
+        if (bytes === null) return;
+    } 
+
+    if (this.connection.state !== ConnectionState.CONNECTED) return; // connection down — drop, don't stall the loop
 
     const header = new ArrayBuffer(8);
     new DataView(header).setFloat64(0, Date.now());
+
     const combined = new Uint8Array(8 + bytes.length);
     combined.set(new Uint8Array(header), 0);
     combined.set(bytes, 8);
 
-    connection.send(combined.buffer);
-    this.chunkCount++;
-    this.dispatchEvent(new CustomEvent('chunk-sent', { detail: { count: this.chunkCount } }));
+    this.connection.send(combined.buffer);
+    this.dispatchEvent(new CustomEvent('chunk-sent'));
   }
 
-  // Chrome sometimes splits the very first WebM init segment across two
-  // dataavailable events. Buffer until the EBML magic bytes are present.
   _mergeInitHeader(bytes) {
-    this._pendingInitHeader = concatUint8(this._pendingInitHeader, bytes);
-    const h = this._pendingInitHeader;
-    if (h.length < 4) return null;
-    if (h[0] !== 0x1a || h[1] !== 0x45 || h[2] !== 0xdf || h[3] !== 0xa3) return null;
+    const merged = new Uint8Array(this._pendingInitHeader.length + bytes.length);
+    merged.set(this._pendingInitHeader, 0);
+    merged.set(bytes, this._pendingInitHeader.length);
+    this._pendingInitHeader = merged;
 
-    this._waitingForInitHeader = false;
-    this._pendingInitHeader = new Uint8Array(0);
-    return h;
+    if (merged.length < 4) return null;
+
+    // Search for the EBML signature anywhere in the merged buffer to prevent deadlocks
+    for (let i = 0; i <= merged.length - 4; i++) {
+        if (
+            merged[i] === 0x1a &&
+            merged[i + 1] === 0x45 &&
+            merged[i + 2] === 0xdf &&
+            merged[i + 3] === 0xa3
+        ) {
+            const header = merged.slice(i);
+            
+            this._waitingForInitHeader = false;
+            this._pendingInitHeader = new Uint8Array(0);
+            
+            console.log("[Recorder] First initialization segment detected.");
+            return header;
+        }
+    }
+
+    return null; // Keep waiting, signature not found yet
+  }
+
+  _teardownRecorder() {
+    const recorder = this.mediaRecorder;
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+    if (recorder) recorder.ondataavailable = null;
+    this.mediaRecorder = null;
   }
 
   _setState(state) {
     this.state = state;
-    this.dispatchEvent(new CustomEvent('state-change', { detail: { state } }));
+    this.dispatchEvent(new CustomEvent('statechange', { detail: state }));
   }
-}
-
-function concatUint8(a, b) {
-  const out = new Uint8Array(a.length + b.length);
-  out.set(a, 0);
-  out.set(b, a.length);
-  return out;
 }
