@@ -143,7 +143,6 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
 
         // Existing signals
         if (FORCE_RECONNECT_SIGNAL.equals(payload) || STREAM_RESTARTED_SIGNAL.equals(payload)) {
-            // ... existing handling ...
             return;
         }
 

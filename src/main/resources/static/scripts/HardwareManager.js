@@ -37,18 +37,54 @@ export class HardwareManager extends EventTarget {
     }
   }
 
-  toggleVideo() {
-    this.videoActive = !this.videoActive;
-    this.localStream?.getVideoTracks().forEach((t) => (t.enabled = this.videoActive));
-    this.dispatchEvent(new CustomEvent('video-toggled', { detail: this.videoActive }));
-    return this.videoActive;
+  async toggleVideo() {
+      this.videoActive = !this.videoActive;
+
+      if (this.videoActive && !this.localStream) {
+        // First time video is turned on and we never acquired anything (joined with cam+mic both off).
+        await this.acquire();
+        this.dispatchEvent(new CustomEvent('video-toggled', { detail: this.videoActive }));
+        return this.videoActive;
+      }
+
+      if (this.videoActive && this.localStream && this.localStream.getVideoTracks().length === 0) {
+        // We have a stream (e.g. audio-only) but no video track yet — need a fresh getUserMedia for video
+        // and merge the new track in rather than dropping the existing audio track.
+        const videoStream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
+        videoStream.getVideoTracks().forEach((t) => this.localStream.addTrack(t));
+        this.dispatchEvent(new CustomEvent('stream-ready', { detail: this.localStream }));
+        this.dispatchEvent(new CustomEvent('video-toggled', { detail: this.videoActive }));
+        return this.videoActive;
+      }
+
+      this.localStream?.getVideoTracks().forEach((t) => (t.enabled = this.videoActive));
+      this.dispatchEvent(new CustomEvent('video-toggled', { detail: this.videoActive }));
+      return this.videoActive;
   }
 
-  toggleAudio() {
-    this.micActive = !this.micActive;
-    this.localStream?.getAudioTracks().forEach((t) => (t.enabled = this.micActive));
-    this.dispatchEvent(new CustomEvent('audio-toggled', { detail: this.micActive }));
-    return this.micActive;
+  async toggleAudio() {
+      this.micActive = !this.micActive;
+
+      if (this.micActive && !this.localStream) {
+        // First time audio is turned on and we never acquired anything (joined with cam+mic both off).
+        await this.acquire();
+        this.dispatchEvent(new CustomEvent('audio-toggled', { detail: this.micActive }));
+        return this.micActive;
+      }
+
+      if (this.micActive && this.localStream && this.localStream.getAudioTracks().length === 0) {
+        // We have a stream (e.g. video-only) but no audio track yet — grab one and merge it in
+        // rather than dropping the existing video track.
+        const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioStream.getAudioTracks().forEach((t) => this.localStream.addTrack(t));
+        this.dispatchEvent(new CustomEvent('stream-ready', { detail: this.localStream }));
+        this.dispatchEvent(new CustomEvent('audio-toggled', { detail: this.micActive }));
+        return this.micActive;
+      }
+
+      this.localStream?.getAudioTracks().forEach((t) => (t.enabled = this.micActive));
+      this.dispatchEvent(new CustomEvent('audio-toggled', { detail: this.micActive }));
+      return this.micActive;
   }
 
   /** Force video state to a specific value — used to roll back a rejected optimistic toggle. */
