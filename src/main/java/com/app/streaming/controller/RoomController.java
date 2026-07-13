@@ -11,7 +11,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
-import com.app.streaming.DTO.ClientInfo;
 import com.app.streaming.DTO.InitStreamConfig;
 import com.app.streaming.model.RoomRegistry;
 import com.app.streaming.model.StreamingRoom;
@@ -33,7 +32,7 @@ public class RoomController {
             baseUrl += "/";
         }
         // Using standard query parameters (?video=true&mic=false)
-        return baseUrl + "room/" + roomId + "/stream?video="+config.isVideo() + "&mic="+config.isMic();
+        return baseUrl + "room/" + roomId;
     }
 
     @GetMapping("/room/{roomId}/stream")

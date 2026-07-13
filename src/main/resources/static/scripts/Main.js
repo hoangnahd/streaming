@@ -55,25 +55,25 @@ class Main {
   }
 
   async toggleCamera() {
-    const next = this.hardware.toggleVideo();
-    this._renderLocalControls();
-    this._sendConfigUpdate(); // optimistic: UI already reflects `next`, before the server confirms
+      const next = await this.hardware.toggleVideo();
+      if (this.dom.localVideo) this.dom.localVideo.srcObject = this.hardware.localStream;
+      this._renderLocalControls();
+      this._sendConfigUpdate();
 
-    if (next) {
-      if (this.connection.state === ConnectionState.CONNECTED) {
-        this.recorder.start(this.hardware.localStream);
+      if (next) {
+        if (this.connection.state === ConnectionState.CONNECTED) {
+          this.recorder.start(this.hardware.localStream);
+        }
+      } else {
+        await this.recorder.stop();
       }
-      // If not connected yet, the 'open' handler below starts it once the
-      // socket comes up — no polling loop needed.
-    } else {
-      await this.recorder.stop();
-    }
   }
 
-  toggleMic() {
-    this.hardware.toggleAudio();
-    this._renderLocalControls();
-    this._sendConfigUpdate();
+  async toggleMic() {
+      await this.hardware.toggleAudio();
+      if (this.dom.localVideo) this.dom.localVideo.srcObject = this.hardware.localStream;
+      this._renderLocalControls();
+      this._sendConfigUpdate();
   }
 
   /** Backs the template's "Simulate Join" dev button. No networking involved. */
