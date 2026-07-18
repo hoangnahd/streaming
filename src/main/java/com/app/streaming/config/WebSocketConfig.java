@@ -19,7 +19,8 @@ public class WebSocketConfig implements WebSocketConfigurer {
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry.addHandler(handler, "/stream/{roomId}")
-                .setAllowedOrigins("*");
+                .addInterceptors(new AuthHandshakeInterceptor())
+                .setAllowedOrigins("https://localhost:8443");
     }
     @Bean
     public ServletServerContainerFactoryBean createWebSocketContainer() {

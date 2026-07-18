@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Manage Accounts</title>
+
+    <!--
+      CSRF tokens exposed to JavaScript so fetch() requests can send them as a
+      header. Safe-navigation (?.) keeps the page rendering even if CSRF is off.
+    -->
+    <meta name="_csrf" th:content="${_csrf?.token}" />
+    <meta name="_csrf_header" th:content="${_csrf?.headerName}" />
+
+    <!-- Tailwind (CDN for prototyping; swap for a compiled build in production) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: '#0f766e', // teal-700 as the single primary brand color
+                    },
+                },
+            },
+        };
+    </script>
+    <style>
+        /* Simple spinner used for loading feedback */
+        .spinner {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid currentColor;
+            border-top-color: transparent;
+            border-radius: 9999px;
+            animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        /* Full-panel loading overlay for the modals */
+        .modal-loading-overlay {
+            position: absolute;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 0.75rem;
+            z-index: 10;
+        }
+        .is-loading .modal-loading-overlay { display: flex; }
+        /* Field-error text: consistent look, wraps nicely, never stretches layout */
+        .field-error {
+            display: block;
+            margin-top: 0.25rem;
+            font-size: 0.75rem;
+            line-height: 1rem;
+            color: #dc2626; /* red-600 */
+            max-width: 22rem;
+        }
+        /* Toast notifications */
+        .toast {
+            transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+        .toast.hide { opacity: 0; transform: translateY(-0.5rem); }
+    </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-800 antialiased">
+
+<!-- Toast container (top-right) for success / error feedback -->
+<div id="toastContainer" class="fixed right-4 top-4 z-[60] flex w-full max-w-xs flex-col gap-2" aria-live="polite" aria-atomic="true"></div>
+
+<!-- ============ Top bar ============ -->
+<div class="sticky top-0 z-40 border-b border-slate-200 bg-white/80 backdrop-blur">
+    <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+        <div class="flex items-center gap-2">
+            <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-white">
+                <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path d="M10 2a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm-7 15a7 7 0 0 1 14 0 1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z" />
+                </svg>
+            </span>
+            <span class="text-sm font-semibold text-slate-900">Admin Console</span>
+        </div>
+
+        <div class="flex items-center gap-3 md:gap-4">
+            <div class="hidden sm:flex items-center gap-2.5 pr-3 md:pr-4 border-r border-zinc-800">
+                <div class="h-8 w-8 shrink-0 rounded-full bg-gradient-to-br from-indigo-500 to-indigo-700 flex items-center justify-center text-xs font-semibold text-white shadow-md shadow-indigo-600/20">
+                    <span th:text="${initial}">U</span>
+                </div>
+                <span class="text-sm font-medium text-zinc-300 max-w-[140px] truncate" th:text="${displayName}">Username</span>
+            </div>
+
+            <form th:action="@{/logout}" method="post" class="m-0">
+                <button type="submit"
+                        class="btn-transition h-9 px-3.5 rounded-lg bg-zinc-800 hover:bg-red-500/10 text-zinc-300 hover:text-red-400 text-sm font-medium flex items-center gap-2 border border-zinc-700/40 hover:border-red-500/30 cursor-pointer">
+                    <i class="fa-solid fa-arrow-right-from-bracket text-xs"></i>
+                    <span class="hidden sm:inline">Logout</span>
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<main class="mx-auto max-w-6xl px-4 py-8">
+    <!-- ============ Header ============ -->
+    <header class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+            <h1 class="text-2xl font-semibold tracking-tight text-slate-900">Manage Accounts</h1>
+            <p class="mt-1 text-sm text-slate-500">Create, edit, and remove user accounts.</p>
+        </div>
+        <button type="button"
+                id="openAddModalBtn"
+                class="inline-flex items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-teal-800 focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2">
+            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <path d="M10 3a1 1 0 0 1 1 1v5h5a1 1 0 1 1 0 2h-5v5a1 1 0 1 1-2 0v-5H4a1 1 0 1 1 0-2h5V4a1 1 0 0 1 1-1Z" />
+            </svg>
+            Add Account
+        </button>
+    </header>
+
+    <!-- ============ Accounts table ============ -->
+    <div class="rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div class="overflow-x-auto rounded-xl">
+            <table class="w-full min-w-[720px] border-collapse text-left text-sm">
+                <caption class="sr-only">List of user accounts</caption>
+                <thead class="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <tr>
+                        <th scope="col" class="px-4 py-3">ID</th>
+                        <th scope="col" class="px-4 py-3">Username</th>
+                        <th scope="col" class="px-4 py-3">Password</th>
+                        <th scope="col" class="px-4 py-3">Role</th>
+                        <th scope="col" class="px-4 py-3">Created At</th>
+                        <th scope="col" class="px-4 py-3 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    <!-- ============ Empty state ============ -->
+                    <tr th:if="${accounts == null or #lists.isEmpty(accounts)}">
+                        <td colspan="6" class="px-4 py-12 text-center">
+                            <div class="flex flex-col items-center gap-2 text-slate-400">
+                                <svg class="h-10 w-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
+                                </svg>
+                                <p class="text-sm font-medium text-slate-500">No accounts found</p>
+                                <p class="text-xs text-slate-400">Click &ldquo;Add Account&rdquo; to create your first user.</p>
+                            </div>
+                        </td>
+                    </tr>
+
+                    <!-- ============ Rows ============ -->
+                    <tr th:each="account : ${accounts}"
+                        th:attr="data-account-id=${account.id}"
+                        class="transition hover:bg-slate-50">
+                        <!-- ID -->
+                        <td class="px-4 py-3 font-mono text-xs text-slate-500" th:text="${account.id}">1</td>
+
+                        <!-- Username -->
+                        <td class="px-4 py-3 font-medium text-slate-900" th:text="${account.username}">jdoe</td>
+
+                        <!-- Password (masked + inline edit; submits via fetch) -->
+                        <td class="px-4 py-3">
+                            <div class="password-cell group relative flex items-center gap-2"
+                                 th:attr="data-account-id=${account.id}">
+                                <!-- Display mode -->
+                                <div class="password-display flex items-center gap-2">
+                                    <span class="select-none tracking-widest text-slate-500" aria-label="Password hidden">&bull;&bull;&bull;&bull;&bull;&bull;</span>
+                                    <button type="button"
+                                            class="password-edit-btn rounded p-1 text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-brand focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-brand group-hover:opacity-100"
+                                            aria-label="Edit password">
+                                        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                            <path d="M13.586 3.586a2 2 0 1 1 2.828 2.828l-.793.793-2.828-2.828.793-.793ZM11.379 5.793 3 14.172V17h2.828l8.379-8.379-2.828-2.828Z" />
+                                        </svg>
+                                    </button>
+                                </div>
+
+                                <!-- Edit mode (hidden by default) -->
+                                <div class="password-edit hidden items-start gap-2">
+                                    <label class="sr-only" th:for="|pwd-${account.id}|">New password</label>
+                                    <div class="flex flex-col">
+                                        <div class="flex items-center gap-2">
+                                            <input type="password"
+                                                   th:id="|pwd-${account.id}|"
+                                                   class="password-input w-40 rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                                                   placeholder="New password"
+                                                   autocomplete="new-password" />
+
+                                            <button type="button"
+                                                    class="password-save-btn rounded p-1 text-teal-600 hover:bg-teal-50 focus:outline-none focus:ring-2 focus:ring-brand"
+                                                    aria-label="Save password">
+                                                <svg class="save-icon h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                    <path fill-rule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.25 7.5a1 1 0 0 1-1.44 0l-3.75-3.875a1 1 0 1 1 1.44-1.388l3.03 3.132 6.53-6.755a1 1 0 0 1 1.414-.028Z" clip-rule="evenodd" />
+                                                </svg>
+                                                <span class="spinner hidden"></span>
+                                            </button>
+
+                                            <button type="button"
+                                                    class="password-cancel-btn rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-brand"
+                                                    aria-label="Cancel edit">
+                                                <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                    <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                                                </svg>
+                                            </button>
+                                        </div>
+
+                                        <!-- Field error: populated from the JSON error map -->
+                                        <span class="field-error password-error hidden"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+
+                        <!-- Role -->
+                        <td class="px-4 py-3">
+                            <span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700"
+                                  th:text="${account.role}">USER</span>
+                        </td>
+
+                        <!-- Created At -->
+                        <td class="px-4 py-3 text-slate-500"
+                            th:text="${account.createdAt != null} ? ${#temporals.format(account.createdAt, 'yyyy-MM-dd HH:mm')} : '—'">2026-01-01 12:00</td>
+
+                        <!-- Actions (kebab menu) -->
+                        <td class="px-4 py-3 text-right">
+                            <div class="kebab-menu relative inline-block text-left">
+                                <button type="button"
+                                        class="kebab-toggle rounded-full p-2 text-slate-500 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-brand"
+                                        aria-haspopup="true" aria-expanded="false" aria-label="Row actions">
+                                    <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                        <path d="M5 10a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm6.5 0a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm5 1.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
+                                    </svg>
+                                </button>
+                                <div class="kebab-dropdown fixed z-[70] hidden w-40 rounded-lg border border-slate-200 bg-white py-1 shadow-lg focus:outline-none"
+                                     role="menu" aria-orientation="vertical">
+                                    <!-- Edit / Update account -->
+                                    <button type="button"
+                                            class="edit-account-btn flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 focus:bg-slate-50 focus:outline-none"
+                                            role="menuitem"
+                                            th:attr="data-account-id=${account.id},
+                                                     data-account-username=${account.username},
+                                                     data-account-role=${account.role},
+                                                     data-account-created-at=${account.createdAt != null} ? ${#temporals.format(account.createdAt, 'yyyy-MM-dd HH:mm')} : ''">
+                                        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                            <path d="M13.586 3.586a2 2 0 1 1 2.828 2.828l-.793.793-2.828-2.828.793-.793ZM11.379 5.793 3 14.172V17h2.828l8.379-8.379-2.828-2.828Z" />
+                                        </svg>
+                                        Edit
+                                    </button>
+                                    <!-- Delete account -->
+                                    <button type="button"
+                                            class="delete-account-btn flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 focus:bg-red-50 focus:outline-none"
+                                            role="menuitem"
+                                            th:attr="data-account-id=${account.id}, data-account-username=${account.username}">
+                                        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                            <path fill-rule="evenodd" d="M8.75 1a1 1 0 0 0-.96.73L7.42 3H4a1 1 0 0 0 0 2h.02l.63 10.06A2 2 0 0 0 6.64 17h6.72a2 2 0 0 0 1.99-1.94L15.98 5H16a1 1 0 1 0 0-2h-3.42l-.37-1.27A1 1 0 0 0 11.25 1h-2.5ZM9 7a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5A.75.75 0 0 1 9 7Zm3 0a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5A.75.75 0 0 1 12 7Z" clip-rule="evenodd" />
+                                        </svg>
+                                        Delete
+                                    </button>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</main>
+
+<!-- ============================================================= -->
+<!-- Add Account Modal                                             -->
+<!-- ============================================================= -->
+<div id="addAccountModal"
+     class="fixed inset-0 z-50 hidden items-center justify-center p-4"
+     role="dialog" aria-modal="true" aria-labelledby="addAccountTitle">
+    <div id="modalBackdrop" class="absolute inset-0 bg-slate-900/50" aria-hidden="true"></div>
+
+    <div id="addModalPanel" class="relative w-full max-w-md rounded-xl bg-white shadow-xl">
+        <div class="modal-loading-overlay" aria-hidden="true">
+            <span class="spinner text-brand" style="width:2rem;height:2rem;border-width:3px;"></span>
+        </div>
+
+        <form id="addAccountForm" novalidate>
+            <div class="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+                <h2 id="addAccountTitle" class="text-lg font-semibold text-slate-900">Add Account</h2>
+                <button type="button"
+                        class="close-add-modal-btn rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand"
+                        aria-label="Close dialog">
+                    <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Non-field / general error banner (e.g. object-level validation) -->
+            <div class="add-alert field-error mx-6 mt-4 hidden rounded-md border border-red-200 bg-red-50 px-3 py-2" style="max-width:none;"></div>
+
+            <div class="space-y-4 px-6 py-5">
+                <div>
+                    <label for="add-username" class="mb-1 block text-sm font-medium text-slate-700">Username</label>
+                    <input type="text" id="add-username" name="username"
+                        class="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                        aria-describedby="add-username-error" autocomplete="off" />
+                    <span id="add-username-error" class="field-error hidden"></span>
+                </div>
+
+                <div>
+                    <label for="add-password" class="mb-1 block text-sm font-medium text-slate-700">Password</label>
+                    <input type="password" id="add-password" name="password"
+                        class="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                        aria-describedby="add-password-error" autocomplete="new-password" />
+                    <span id="add-password-error" class="field-error hidden"></span>
+                </div>
+
+                <div>
+                    <label for="add-confirmedPassword" class="mb-1 block text-sm font-medium text-slate-700">Confirm Password</label>
+                    <input type="password" id="add-confirmedPassword" name="confirmedPassword"
+                        class="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                        aria-describedby="add-confirmedPassword-error" autocomplete="new-password" />
+                    <span id="add-confirmedPassword-error" class="field-error hidden"></span>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-4">
+                <button type="button"
+                        class="close-add-modal-btn rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2">
+                    Close
+                </button>
+                <button type="submit" id="addSaveBtn"
+                        class="inline-flex items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-teal-800 focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2 disabled:opacity-60">
+                    <span class="spinner hidden"></span>
+                    <span class="btn-label">Save</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ============================================================= -->
+<!-- Edit Account Modal                                            -->
+<!-- ============================================================= -->
+<div id="editAccountModal"
+     class="fixed inset-0 z-50 hidden items-center justify-center p-4"
+     role="dialog" aria-modal="true" aria-labelledby="editAccountTitle">
+    <div id="editModalBackdrop" class="absolute inset-0 bg-slate-900/50" aria-hidden="true"></div>
+
+    <div id="editModalPanel" class="relative w-full max-w-md rounded-xl bg-white shadow-xl">
+        <div class="modal-loading-overlay" aria-hidden="true">
+            <span class="spinner text-brand" style="width:2rem;height:2rem;border-width:3px;"></span>
+        </div>
+
+        <form id="editAccountForm" novalidate>
+            <input type="hidden" id="edit-id-hidden" name="id" />
+
+            <div class="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+                <h2 id="editAccountTitle" class="text-lg font-semibold text-slate-900">Edit Account</h2>
+                <button type="button"
+                        class="close-edit-modal-btn rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand"
+                        aria-label="Close dialog">
+                    <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Non-field / general error banner -->
+            <div class="edit-alert field-error mx-6 mt-4 hidden rounded-md border border-red-200 bg-red-50 px-3 py-2" style="max-width:none;"></div>
+
+            <div class="space-y-4 px-6 py-5">
+                <!-- ID (read-only / greyed out) -->
+                <div>
+                    <label for="edit-id-display" class="mb-1 block text-sm font-medium text-slate-700">ID</label>
+                    <input type="text" id="edit-id-display" readonly disabled
+                        class="block w-full cursor-not-allowed rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-500" />
+                </div>
+
+                <!-- Created At (read-only / greyed out) -->
+                <div>
+                    <label for="edit-createdAt" class="mb-1 block text-sm font-medium text-slate-700">Created At</label>
+                    <input type="text" id="edit-createdAt" readonly disabled
+                        class="block w-full cursor-not-allowed rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-500" />
+                </div>
+
+                <!-- Username (editable) -->
+                <div>
+                    <label for="edit-username" class="mb-1 block text-sm font-medium text-slate-700">Username</label>
+                    <input type="text" id="edit-username" name="username"
+                        class="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                        aria-describedby="edit-username-error" autocomplete="off" />
+                    <span id="edit-username-error" class="field-error hidden"></span>
+                </div>
+
+                <!-- Role (editable: USER or ADMIN) -->
+                <div>
+                    <label for="edit-role" class="mb-1 block text-sm font-medium text-slate-700">Role</label>
+                    <select id="edit-role" name="role"
+                        class="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                        aria-describedby="edit-role-error">
+                        <option value="USER">USER</option>
+                        <option value="ADMIN">ADMIN</option>
+                    </select>
+                    <span id="edit-role-error" class="field-error hidden"></span>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-4">
+                <button type="button"
+                        class="close-edit-modal-btn rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2">
+                    Close
+                </button>
+                <!-- Save button: starts disabled/grey, turns blue once something changes -->
+                <button type="submit" id="editSaveBtn" disabled
+                        class="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-200 px-4 py-2 text-sm font-medium text-slate-400 shadow-sm transition focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed">
+                    <span class="spinner hidden"></span>
+                    <span class="btn-label">Save</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ============================================================= -->
+<!-- Scripts                                                       -->
+<!-- ============================================================= -->
+<script th:inline="none">
+    (function () {
+        'use strict';
+
+        // ---------------------------------------------------------
+        // Shared helpers
+        // ---------------------------------------------------------
+
+        // Build headers for a JSON fetch, including the Spring CSRF token.
+        function jsonHeaders() {
+            const headers = { 'Content-Type': 'application/json' };
+            const token = document.querySelector('meta[name="_csrf"]');
+            const header = document.querySelector('meta[name="_csrf_header"]');
+            if (token && header && token.getAttribute('content') && header.getAttribute('content')) {
+                headers[header.getAttribute('content')] = token.getAttribute('content');
+            }
+            return headers;
+        }
+
+        const ERROR_INPUT_CLASSES = ['border-red-400', 'focus:border-red-400', 'focus:ring-red-400'];
+
+        // Clear a single field's error state.
+        function clearFieldError(input, errorEl) {
+            if (errorEl) { errorEl.textContent = ''; errorEl.classList.add('hidden'); }
+            if (input) ERROR_INPUT_CLASSES.forEach(function (c) { input.classList.remove(c); });
+        }
+
+        // Show a single field's error message under its input.
+        function setFieldError(input, errorEl, message) {
+            if (errorEl) { errorEl.textContent = message; errorEl.classList.remove('hidden'); }
+            if (input) ERROR_INPUT_CLASSES.forEach(function (c) { input.classList.add(c); });
+        }
+
+        // Reset all errors for a modal given a field map { fieldName: {input, error} }.
+        function clearErrors(fieldMap, alertEl) {
+            Object.keys(fieldMap).forEach(function (name) {
+                clearFieldError(fieldMap[name].input, fieldMap[name].error);
+            });
+            if (alertEl) { alertEl.textContent = ''; alertEl.classList.add('hidden'); }
+        }
+
+        // Apply a { field: message } JSON error map to the correct fields.
+        // Any keys with no matching field fall back to the general alert banner.
+        function applyErrorMap(errors, fieldMap, alertEl) {
+            const leftovers = [];
+            Object.keys(errors || {}).forEach(function (field) {
+                const ref = fieldMap[field];
+                if (ref) {
+                    setFieldError(ref.input, ref.error, errors[field]);
+                } else {
+                    leftovers.push(errors[field]);
+                }
+            });
+            if (leftovers.length && alertEl) {
+                alertEl.textContent = leftovers.join(' ');
+                alertEl.classList.remove('hidden');
+            }
+        }
+
+        // Toggle a submit button between idle and loading states.
+        // Note: this always resets the spinner + label when loading === false,
+        // even if the button's disabled state is managed elsewhere afterwards.
+        function setBtnLoading(btn, loading, loadingText) {
+            const spin = btn.querySelector('.spinner');
+            const label = btn.querySelector('.btn-label');
+            btn.disabled = loading;
+            if (spin) spin.classList.toggle('hidden', !loading);
+            if (label) {
+                if (loading) {
+                    if (loadingText) {
+                        if (label.dataset.idle === undefined) label.dataset.idle = label.textContent;
+                        label.textContent = loadingText;
+                    }
+                } else if (label.dataset.idle !== undefined) {
+                    label.textContent = label.dataset.idle;
+                    delete label.dataset.idle;
+                }
+            }
+        }
+
+        // ---------- Toasts (persist across reloads via sessionStorage) ----------
+        const toastContainer = document.getElementById('toastContainer');
+
+        function showToast(message, type) {
+            const el = document.createElement('div');
+            const palette = type === 'error'
+                ? 'border-red-200 bg-red-50 text-red-800'
+                : 'border-teal-200 bg-teal-50 text-teal-800';
+            el.className = 'toast rounded-lg border px-4 py-3 text-sm shadow-sm ' + palette;
+            el.setAttribute('role', type === 'error' ? 'alert' : 'status');
+            el.textContent = message;
+            toastContainer.appendChild(el);
+            setTimeout(function () {
+                el.classList.add('hide');
+                setTimeout(function () { el.remove(); }, 300);
+            }, 3500);
+        }
+
+        function reloadWithToast(message) {
+            try { sessionStorage.setItem('accountToast', message); } catch (e) {}
+            window.location.reload();
+        }
+
+        // Show a queued toast after a reload.
+        try {
+            const queued = sessionStorage.getItem('accountToast');
+            if (queued) {
+                sessionStorage.removeItem('accountToast');
+                showToast(queued, 'success');
+            }
+        } catch (e) {}
+
+        // Read an error message from a failed response (JSON map or text).
+        async function readError(res, fieldMap, alertEl) {
+            let handled = false;
+            try {
+                const data = await res.clone().json();
+                if (data && typeof data === 'object' && !Array.isArray(data)) {
+                    applyErrorMap(data, fieldMap, alertEl);
+                    handled = true;
+                }
+            } catch (e) { /* not JSON */ }
+            return handled;
+        }
+
+        // ---------------------------------------------------------
+        // Add Account modal
+        // ---------------------------------------------------------
+        const addModal = document.getElementById('addAccountModal');
+        const addPanel = document.getElementById('addModalPanel');
+        const addForm = document.getElementById('addAccountForm');
+        const addSaveBtn = document.getElementById('addSaveBtn');
+        const addAlert = addModal.querySelector('.add-alert');
+        const openAddBtn = document.getElementById('openAddModalBtn');
+        let addLastFocused = null;
+
+        const addFields = {
+            username: { input: document.getElementById('add-username'), error: document.getElementById('add-username-error') },
+            password: { input: document.getElementById('add-password'), error: document.getElementById('add-password-error') },
+            confirmedPassword: { input: document.getElementById('add-confirmedPassword'), error: document.getElementById('add-confirmedPassword-error') }
+        };
+
+        function openAddModal() {
+            addLastFocused = document.activeElement;
+            clearErrors(addFields, addAlert);
+            addForm.reset();
+            addModal.classList.remove('hidden');
+            addModal.classList.add('flex');
+            document.body.style.overflow = 'hidden';
+            addFields.username.input.focus();
+        }
+
+        function closeAddModal() {
+            addPanel.classList.remove('is-loading');
+            addModal.classList.add('hidden');
+            addModal.classList.remove('flex');
+            document.body.style.overflow = '';
+            if (addLastFocused) addLastFocused.focus();
+        }
+
+        openAddBtn.addEventListener('click', openAddModal);
+        addModal.querySelectorAll('.close-add-modal-btn').forEach(function (btn) {
+            btn.addEventListener('click', closeAddModal);
+        });
+        document.getElementById('modalBackdrop').addEventListener('click', closeAddModal);
+
+        addForm.addEventListener('submit', async function (e) {
+            e.preventDefault();
+            clearErrors(addFields, addAlert);
+            setBtnLoading(addSaveBtn, true, 'Saving...');
+            addPanel.classList.add('is-loading');
+            try {
+                const res = await fetch('/admin/manage/accounts/add', {
+                    method: 'POST',
+                    headers: jsonHeaders(),
+                    body: JSON.stringify({
+                        username: addFields.username.input.value,
+                        password: addFields.password.input.value,
+                        confirmedPassword: addFields.confirmedPassword.input.value
+                    })
+                });
+                if (res.ok) {
+                    reloadWithToast('Account added successfully.');
+                    return;
+                }
+                if (res.status === 400) {
+                    const handled = await readError(res, addFields, addAlert);
+                    if (!handled) {
+                        addAlert.textContent = 'Please correct the highlighted fields.';
+                        addAlert.classList.remove('hidden');
+                    }
+                } else if (res.status === 401 || res.status === 403) {
+                    showToast('You are not authorized to perform this action.', 'error');
+                } else {
+                    showToast('Something went wrong. Please try again.', 'error');
+                }
+            } catch (err) {
+                showToast('Network error. Please try again.', 'error');
+            } finally {
+                setBtnLoading(addSaveBtn, false);
+                addPanel.classList.remove('is-loading');
+            }
+        });
+
+        // ---------------------------------------------------------
+        // Edit Account modal
+        // ---------------------------------------------------------
+        const editModal = document.getElementById('editAccountModal');
+        const editPanel = document.getElementById('editModalPanel');
+        const editForm = document.getElementById('editAccountForm');
+        const editAlert = editModal.querySelector('.edit-alert');
+        const editIdHidden = document.getElementById('edit-id-hidden');
+        const editIdDisplay = document.getElementById('edit-id-display');
+        const editCreatedAt = document.getElementById('edit-createdAt');
+        const editUsername = document.getElementById('edit-username');
+        const editRole = document.getElementById('edit-role');
+        const editSaveBtn = document.getElementById('editSaveBtn');
+        let editLastFocused = null;
+        let editInitial = { username: '', role: '' };
+
+        const editFields = {
+            username: { input: editUsername, error: document.getElementById('edit-username-error') },
+            role: { input: editRole, error: document.getElementById('edit-role-error') }
+        };
+
+        const SAVE_ACTIVE = ['bg-brand', 'text-white', 'hover:bg-teal-800', 'focus:ring-brand', 'cursor-pointer'];
+        const SAVE_INACTIVE = ['bg-slate-200', 'text-slate-400', 'cursor-not-allowed'];
+
+        function setSaveState(isDirty) {
+            editSaveBtn.disabled = !isDirty;
+            if (isDirty) {
+                SAVE_INACTIVE.forEach(function (c) { editSaveBtn.classList.remove(c); });
+                SAVE_ACTIVE.forEach(function (c) { editSaveBtn.classList.add(c); });
+            } else {
+                SAVE_ACTIVE.forEach(function (c) { editSaveBtn.classList.remove(c); });
+                SAVE_INACTIVE.forEach(function (c) { editSaveBtn.classList.add(c); });
+            }
+        }
+
+        function checkDirty() {
+            setSaveState(editUsername.value !== editInitial.username || editRole.value !== editInitial.role);
+        }
+
+        function openEditModal(data) {
+            editLastFocused = document.activeElement;
+            clearErrors(editFields, editAlert);
+
+            editIdHidden.value = data.id;
+            editIdDisplay.value = data.id;
+            editCreatedAt.value = data.createdAt || '—';
+            editUsername.value = data.username || '';
+            editRole.value = (data.role === 'ADMIN') ? 'ADMIN' : 'USER';
+            editInitial = { username: editUsername.value, role: editRole.value };
+
+            setSaveState(false);
+            editPanel.classList.remove('is-loading');
+            setBtnLoading(editSaveBtn, false);
+
+            editModal.classList.remove('hidden');
+            editModal.classList.add('flex');
+            document.body.style.overflow = 'hidden';
+            editUsername.focus();
+        }
+
+        function closeEditModal() {
+            editModal.classList.add('hidden');
+            editModal.classList.remove('flex');
+            editPanel.classList.remove('is-loading');
+            document.body.style.overflow = '';
+            if (editLastFocused) editLastFocused.focus();
+        }
+
+        editUsername.addEventListener('input', checkDirty);
+        editRole.addEventListener('change', checkDirty);
+
+        editModal.querySelectorAll('.close-edit-modal-btn').forEach(function (btn) {
+            btn.addEventListener('click', closeEditModal);
+        });
+        document.getElementById('editModalBackdrop').addEventListener('click', closeEditModal);
+
+        editForm.addEventListener('submit', async function (e) {
+            e.preventDefault();
+            clearErrors(editFields, editAlert);
+            editPanel.classList.add('is-loading');
+            setBtnLoading(editSaveBtn, true, 'Saving...');
+            try {
+                const res = await fetch('/admin/manage/accounts/' + encodeURIComponent(editIdHidden.value) + '/update', {
+                    method: 'POST',
+                    headers: jsonHeaders(),
+                    body: JSON.stringify({
+                        username: editUsername.value,
+                        role: editRole.value
+                    })
+                });
+                if (res.ok) {
+                    reloadWithToast('Account updated successfully.');
+                    return;
+                }
+                if (res.status === 400) {
+                    const handled = await readError(res, editFields, editAlert);
+                    if (!handled) {
+                        editAlert.textContent = 'Please correct the highlighted fields.';
+                        editAlert.classList.remove('hidden');
+                    }
+                } else if (res.status === 401 || res.status === 403) {
+                    showToast('You are not authorized to perform this action.', 'error');
+                } else {
+                    showToast('Something went wrong. Please try again.', 'error');
+                }
+            } catch (err) {
+                showToast('Network error. Please try again.', 'error');
+            } finally {
+                // Always clear the loading UI first...
+                setBtnLoading(editSaveBtn, false);
+                editPanel.classList.remove('is-loading');
+                // ...then re-derive the Save button's enabled/blue state from the
+                // current field values so it never stays stuck spinning/disabled.
+                checkDirty();
+            }
+        });
+
+        // ---------------------------------------------------------
+        // Kebab (row actions) menus
+        // ---------------------------------------------------------
+        function closeAllMenus() {
+            document.querySelectorAll('.kebab-dropdown').forEach(function (d) { d.classList.add('hidden'); });
+            document.querySelectorAll('.kebab-toggle').forEach(function (t) { t.setAttribute('aria-expanded', 'false'); });
+        }
+
+        // Position a fixed dropdown next to its toggle, flipping up if needed.
+        function positionDropdown(toggle, dropdown) {
+            const rect = toggle.getBoundingClientRect();
+            // Reveal first so we can measure its height.
+            dropdown.classList.remove('hidden');
+            const menuH = dropdown.offsetHeight;
+            const menuW = dropdown.offsetWidth;
+            const gap = 4;
+            const spaceBelow = window.innerHeight - rect.bottom;
+
+            let top;
+            if (spaceBelow < menuH + gap && rect.top > menuH + gap) {
+                top = rect.top - menuH - gap;      // flip above
+            } else {
+                top = rect.bottom + gap;           // default below
+            }
+            // Right-align the menu with the toggle, clamped to the viewport.
+            let left = rect.right - menuW;
+            if (left < 8) left = 8;
+
+            dropdown.style.top = top + 'px';
+            dropdown.style.left = left + 'px';
+        }
+
+        document.querySelectorAll('.kebab-toggle').forEach(function (toggle) {
+            toggle.addEventListener('click', function (e) {
+                e.stopPropagation();
+                const dropdown = toggle.parentElement.querySelector('.kebab-dropdown');
+                const isOpen = !dropdown.classList.contains('hidden');
+                closeAllMenus();
+                if (!isOpen) {
+                    positionDropdown(toggle, dropdown);
+                    toggle.setAttribute('aria-expanded', 'true');
+                }
+            });
+        });
+
+        // Reposition open menus on scroll/resize so they track the toggle.
+        function repositionOpenMenus() {
+            document.querySelectorAll('.kebab-dropdown').forEach(function (dropdown) {
+                if (dropdown.classList.contains('hidden')) return;
+                const toggle = dropdown.parentElement.querySelector('.kebab-toggle');
+                if (toggle) positionDropdown(toggle, dropdown);
+            });
+        }
+        window.addEventListener('scroll', repositionOpenMenus, true);
+        window.addEventListener('resize', repositionOpenMenus);
+
+        document.querySelectorAll('.edit-account-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                closeAllMenus();
+                openEditModal({
+                    id: btn.getAttribute('data-account-id'),
+                    username: btn.getAttribute('data-account-username'),
+                    role: btn.getAttribute('data-account-role'),
+                    createdAt: btn.getAttribute('data-account-created-at')
+                });
+            });
+        });
+
+        // ---------------------------------------------------------
+        // Delete flow (confirm -> fetch)
+        // ---------------------------------------------------------
+        document.querySelectorAll('.delete-account-btn').forEach(function (btn) {
+            btn.addEventListener('click', async function () {
+                const id = btn.getAttribute('data-account-id');
+                const username = btn.getAttribute('data-account-username') || 'this account';
+                closeAllMenus();
+                if (!window.confirm('Are you sure you want to delete "' + username + '"? This action cannot be undone.')) return;
+
+                const row = btn.closest('tr');
+                row.style.opacity = '0.5';
+                row.style.pointerEvents = 'none';
+                try {
+                    const res = await fetch('/admin/manage/accounts/' + encodeURIComponent(id) + '/delete', {
+                        method: 'POST',
+                        headers: jsonHeaders()
+                    });
+                    if (res.ok) {
+                        reloadWithToast('Account deleted successfully.');
+                        return;
+                    }
+                    let message = 'Unable to delete account.';
+                    try {
+                        const data = await res.clone().json();
+                        if (data && typeof data === 'object') {
+                            message = data.message || Object.values(data)[0] || message;
+                        }
+                    } catch (e) { /* keep default */ }
+                    showToast(message, 'error');
+                    row.style.opacity = '';
+                    row.style.pointerEvents = '';
+                } catch (err) {
+                    showToast('Network error. Please try again.', 'error');
+                    row.style.opacity = '';
+                    row.style.pointerEvents = '';
+                }
+            });
+        });
+
+        // ---------------------------------------------------------
+        // Inline password edit (fetch + per-row field error)
+        // ---------------------------------------------------------
+        document.querySelectorAll('.password-cell').forEach(function (cell) {
+            const id = cell.getAttribute('data-account-id');
+            const display = cell.querySelector('.password-display');
+            const editWrap = cell.querySelector('.password-edit');
+            const input = cell.querySelector('.password-input');
+            const errorEl = cell.querySelector('.password-error');
+            const editBtn = cell.querySelector('.password-edit-btn');
+            const cancelBtn = cell.querySelector('.password-cancel-btn');
+            const saveBtn = cell.querySelector('.password-save-btn');
+            const saveIcon = saveBtn.querySelector('.save-icon');
+            const saveSpin = saveBtn.querySelector('.spinner');
+
+            function enterEdit() {
+                clearFieldError(input, errorEl);
+                display.classList.add('hidden');
+                editWrap.classList.remove('hidden');
+                editWrap.classList.add('flex');
+                input.value = '';
+                input.focus();
+            }
+
+            function exitEdit() {
+                clearFieldError(input, errorEl);
+                editWrap.classList.add('hidden');
+                editWrap.classList.remove('flex');
+                display.classList.remove('hidden');
+            }
+
+            function setSaving(loading) {
+                saveBtn.disabled = loading;
+                if (saveIcon) saveIcon.classList.toggle('hidden', loading);
+                if (saveSpin) saveSpin.classList.toggle('hidden', !loading);
+            }
+
+            async function savePassword() {
+                clearFieldError(input, errorEl);
+                setSaving(true);
+                try {
+                    const res = await fetch('/admin/manage/accounts/' + encodeURIComponent(id) + '/password', {
+                        method: 'POST',
+                        headers: jsonHeaders(),
+                        body: JSON.stringify({ password: input.value })
+                    });
+                    if (res.ok) {
+                        showToast('Password updated successfully.', 'success');
+                        exitEdit();
+                        return;
+                    }
+                    if (res.status === 400) {
+                        let handled = false;
+                        try {
+                            const data = await res.clone().json();
+                            if (data && typeof data === 'object') {
+                                // The DTO field is "password"; fall back to first message.
+                                const msg = data.password || Object.values(data)[0];
+                                if (msg) { setFieldError(input, errorEl, msg); handled = true; }
+                            }
+                        } catch (e) { /* not JSON */ }
+                        if (!handled) setFieldError(input, errorEl, 'Invalid password.');
+                    } else if (res.status === 401 || res.status === 403) {
+                        showToast('You are not authorized to perform this action.', 'error');
+                    } else {
+                        showToast('Something went wrong. Please try again.', 'error');
+                    }
+                } catch (err) {
+                    showToast('Network error. Please try again.', 'error');
+                } finally {
+                    setSaving(false);
+                }
+            }
+
+            editBtn.addEventListener('click', enterEdit);
+            cancelBtn.addEventListener('click', exitEdit);
+            saveBtn.addEventListener('click', savePassword);
+
+            // Enter saves, Escape cancels. Guard against IME composition.
+            input.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
+                    e.preventDefault();
+                    savePassword();
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    exitEdit();
+                }
+            });
+        });
+
+        // ---------------------------------------------------------
+        // Global listeners
+        // ---------------------------------------------------------
+        document.addEventListener('click', closeAllMenus);
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') {
+                closeAllMenus();
+                if (!addModal.classList.contains('hidden')) closeAddModal();
+                if (!editModal.classList.contains('hidden')) closeEditModal();
+            }
+        });
+    })();
+</script>
+</body>
+</html>

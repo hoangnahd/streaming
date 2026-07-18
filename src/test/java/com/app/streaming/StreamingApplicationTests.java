@@ -1,9 +1,9 @@
 package com.app.streaming;
 
 import com.app.streaming.handler.AdaptiveVideoBroadcastHandler;
-import com.app.streaming.model.BroadcastSink;
-import com.app.streaming.model.RoomRegistry;
-import com.app.streaming.model.SessionRegistry;
+import com.app.streaming.handler.BroadcastSink;
+import com.app.streaming.registry.RoomRegistry;
+import com.app.streaming.registry.SessionRegistry;
 import com.app.streaming.model.StreamingClient;
 import com.app.streaming.model.StreamingRoom;
 
@@ -25,15 +25,13 @@ class StreamingApplicationTests {
     private BroadcastSink sink;
 	private SessionRegistry sessionRegistry;
 	private RoomRegistry roomRegistry;
-	private ScheduledTaskManager scheduledTaskManager;
 
 	@BeforeEach
 	void setup() {
 		sessionRegistry = new SessionRegistry();
-		scheduledTaskManager = new ScheduledTaskManager();
 		roomRegistry = new RoomRegistry();
 		sink = new BroadcastSink(sessionRegistry, roomRegistry);
-		handler = new AdaptiveVideoBroadcastHandler(sessionRegistry, sink, roomRegistry, scheduledTaskManager);
+		handler = new AdaptiveVideoBroadcastHandler(sessionRegistry, sink, roomRegistry);
 	}
 	@Test
 	void should_RegisterAsViewer_WhenQueryContainsAsViewerParam() throws Exception {

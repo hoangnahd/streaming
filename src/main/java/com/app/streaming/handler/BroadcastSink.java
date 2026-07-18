@@ -1,9 +1,13 @@
-package com.app.streaming.model;
+package com.app.streaming.handler;
 
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.BinaryMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
+
+import com.app.streaming.model.StreamingClient;
+import com.app.streaming.registry.RoomRegistry;
+import com.app.streaming.registry.SessionRegistry;
 
 import java.io.IOException;
 import java.util.List;

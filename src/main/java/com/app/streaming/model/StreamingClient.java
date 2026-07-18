@@ -59,10 +59,4 @@ public class StreamingClient {
     public void setMicrophoneEnabled(boolean microphoneEnabled) {
         this.microphoneEnabled = microphoneEnabled;
     }
-
-    // public byte[] getInitializationHeaderSegment() {
-    //     return this.initializationHeaderSegment;
-    // }
-
-
 }
