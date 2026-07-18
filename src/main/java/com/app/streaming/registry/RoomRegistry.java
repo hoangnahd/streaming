@@ -1,10 +1,12 @@
-package com.app.streaming.model;
+package com.app.streaming.registry;
 
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.stereotype.Component;
+
+import com.app.streaming.model.StreamingRoom;
 
 @Component
 public class RoomRegistry {

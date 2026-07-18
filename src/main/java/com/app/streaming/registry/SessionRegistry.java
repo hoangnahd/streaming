@@ -1,6 +1,8 @@
-package com.app.streaming.model;
+package com.app.streaming.registry;
 
 import org.springframework.stereotype.Component;
+
+import com.app.streaming.model.StreamingClient;
 
 import java.util.HashMap;
 

@@ -1,12 +1,10 @@
 package com.app.streaming.handler;
 
-import com.app.streaming.ScheduledTaskManager;
 import com.app.streaming.DTO.ClientInfo;
-import com.app.streaming.model.BroadcastSink;
-import com.app.streaming.model.RoomRegistry;
-import com.app.streaming.model.SessionRegistry;
 import com.app.streaming.model.StreamingClient;
 import com.app.streaming.model.StreamingRoom;
+import com.app.streaming.registry.RoomRegistry;
+import com.app.streaming.registry.SessionRegistry;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -34,7 +32,6 @@ import java.util.stream.Collectors;
 public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
     private final Logger log = Logger.getLogger(AdaptiveVideoBroadcastHandler.class.getName());
 
-    private final ScheduledTaskManager scheduledTaskManager;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final String FORCE_RECONNECT_SIGNAL = "{\"event\":\"FORCE_RECONNECT\"}";
@@ -44,11 +41,10 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
     private final BroadcastSink broadcastSink;
     private final RoomRegistry roomRegistry;
 
-    public AdaptiveVideoBroadcastHandler(SessionRegistry sessionRegistry, BroadcastSink broadcastSink, RoomRegistry roomRegistry, ScheduledTaskManager scheduledTaskManager) {
+    public AdaptiveVideoBroadcastHandler(SessionRegistry sessionRegistry, BroadcastSink broadcastSink, RoomRegistry roomRegistry) {
         this.sessionRegistry = sessionRegistry;
         this.broadcastSink = broadcastSink;
         this.roomRegistry = roomRegistry;
-        this.scheduledTaskManager = scheduledTaskManager;
     }
 
 

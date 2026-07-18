@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import com.app.streaming.DTO.InitStreamConfig;
-import com.app.streaming.model.RoomRegistry;
+import com.app.streaming.registry.RoomRegistry;
 import com.app.streaming.model.StreamingRoom;
 
 

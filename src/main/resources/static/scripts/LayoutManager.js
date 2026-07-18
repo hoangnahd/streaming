@@ -22,12 +22,18 @@ export class LayoutManager {
     const totalPeers = participantCount ?? allCardsBefore.length;
 
     this.countBadge.innerText = `${totalPeers} Participant${totalPeers > 1 ? 's' : ''} Active`;
-    this.gridContainer.className = 'w-full h-full max-w-7xl transition-all duration-300 gap-4';
+    // auto-rows-fr forces every row track to equal height regardless of
+    // content (video vs avatar placeholder), instead of each row sizing
+    // to its tallest child.
+    this.gridContainer.className = 'w-full h-full max-w-7xl transition-all duration-300 gap-4 auto-rows-fr';
 
     const allCards = this.gridContainer.querySelectorAll('[data-participant-id]');
     allCards.forEach((card) => {
       card.className =
-        'btn-transition relative w-full bg-zinc-900/50 border border-zinc-800/80 rounded-2xl overflow-hidden shadow-xl flex items-center justify-center cursor-pointer group hover:border-zinc-700';
+        // h-full here is what was missing — without it every card falls
+        // back to its own content height (video intrinsic ratio vs
+        // avatar flex-box height), which is what produced the uneven rows.
+        'btn-transition relative w-full h-full bg-zinc-900/50 border border-zinc-800/80 rounded-2xl overflow-hidden shadow-xl flex items-center justify-center cursor-pointer group hover:border-zinc-700';
     });
 
     if (this.focusedParticipantId && this._hasParticipant(this.focusedParticipantId)) {
@@ -45,6 +51,7 @@ export class LayoutManager {
   }
 
   _layoutHero(allCards) {
+    this.gridContainer.classList.remove('grid', 'auto-rows-fr');
     this.gridContainer.classList.add('flex', 'flex-col', 'md:flex-row', 'items-stretch');
 
     let strip = document.getElementById('thumbStripWindow');
