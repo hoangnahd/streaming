@@ -30,7 +30,7 @@ public class CustomUserDetailsService implements UserDetailsService {
 
         this.userRepository = userRepository;
         this.encoder = encoder;
-        if(userRepository.existsByUsername("admin2")) return;
+        if(userRepository.existsByUsername("admin")) return;
         
         User adminUser = new User("admin2", encoder.encode("Ha!@#1427"));
         adminUser.setRole("ADMIN");
