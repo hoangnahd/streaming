@@ -40,11 +40,8 @@ RUN mkdir -p /certs && chown -R spring:spring /app /certs
 # exactly - SSL_KEYSTORE_PATH / SSL_KEYSTORE_PASSWORD / DB_URL / USERNAME_DB /
 # PASSWORD_DB. Only the non-secret path is set here; passwords and DB
 # connection details are supplied at `docker run` / compose level via .env.
-ENV SERVER_PORT=8443 \
-    SSL_KEYSTORE_PATH=file:/certs/keystore.p12 \
-    JAVA_OPTS=""
 
-EXPOSE 8443
+EXPOSE 8080
 
 USER spring:spring
 

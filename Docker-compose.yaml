@@ -3,13 +3,9 @@ services:
     build: .
     image: streaming-app:latest
     ports:
-      - "8443:8443"
+      - "8080:8080"
     env_file:
       - .env
     environment:
       JAVA_OPTS: "-Xms256m -Xmx512m"
-    volumes:
-      # Host directory holding keystore.p12 - mounted read-only, never baked
-      # into the image itself
-      - ./certs:/certs:ro
     restart: unless-stopped
