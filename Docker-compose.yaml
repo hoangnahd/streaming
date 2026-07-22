@@ -1,6 +1,5 @@
 services:
   app:
-    build: .
     image: streaming-app:latest
     ports:
       - "8080:8080"
