@@ -48,19 +48,11 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
     }
 
 
-    private String extractRoomIdFromPath(String path) {
-        if (path == null || !path.contains("/stream/")) {
-            throw new IllegalArgumentException("Invalid stream path mapping.");
-        }
-        // Splitting by "/stream/" gets us whatever identifier follows it
-        return path.substring(path.indexOf("/stream/") + "/stream/".length()).split("/")[0];
-    }
-
     private Map<String, String> parseQueryParameters(String query) {
         if (query == null || query.isBlank()) {
             return Map.of();
         }
-        // Transforms "video=false&mic=false" into a clean Map
+        // Transforms "roomId=123&isCam=true&isMic=false" into a clean Map
         return Arrays.stream(query.split("&"))
                 .map(param -> param.split("=", 2))
                 .filter(pair -> pair.length == 2)
@@ -73,27 +65,41 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
     
     @Override
     public void afterConnectionEstablished(WebSocketSession rawSession) throws Exception {
-        WebSocketSession session = new ConcurrentWebSocketSessionDecorator(rawSession, 5000 /* send timeout ms */, 65536 /* buffer size bytes */);
-        if (!session.isOpen() || session.getUri() == null) return;
+        
+        WebSocketSession session = new ConcurrentWebSocketSessionDecorator(
+            rawSession, 
+            5000 /* send timeout ms */, 
+            65536 /* buffer size bytes */
+        );
+
+        if (!session.isOpen() || session.getUri() == null) {
+            return;
+        }
 
         URI uri = session.getUri();
         if (uri == null) {
             session.close();
             return;
         }
-        // 1. Extract Room ID from the URL Path segment
-        String path = uri.getPath(); // e.g., "/stream/c56c94bd-9bf1-4b0d-baca-4a0b1626ca31"
-        String roomId = extractRoomIdFromPath(path);
 
-        // Check the existence of the given room id
-        // 2. Parse Query Parameters into a clean Map
+        // 1. Parse Query Parameters into a clean Map
         Map<String, String> queryParams = parseQueryParameters(uri.getQuery());
         
-        // 3. Extract media flags matching your URL names ("video" and "mic")
-        boolean isCameraEnabled = Boolean.parseBoolean(queryParams.getOrDefault("video", "false"));
-        boolean isMicrophoneEnabled = Boolean.parseBoolean(queryParams.getOrDefault("mic", "false"));
+        // 2. Extract roomId, isCam, and isMic flags directly from query params
+        String roomId = queryParams.get("roomId");
+        boolean isCameraEnabled = Boolean.parseBoolean(queryParams.getOrDefault("isCam", "false"));
+        boolean isMicrophoneEnabled = Boolean.parseBoolean(queryParams.getOrDefault("isMic", "false"));
+
+        log.info("roomId: " + roomId + "\nisCam: " + isCameraEnabled + "\nisMic: " + isMicrophoneEnabled);
+
+        // Validate presence of required parameter
+        if (roomId == null || roomId.isBlank()) {
+            log.warning("[Handler] Connection attempt rejected: Missing roomId parameter.");
+            session.close(CloseStatus.BAD_DATA);
+            return;
+        }
         
-        // 4. Validate Room Existence
+        // 3. Validate Room Existence
         StreamingRoom room = roomRegistry.findRoom(roomId);
         if (room == null) {
             // Close connection if room doesn't exist to prevent memory leaks or orphaned connections
@@ -101,24 +107,28 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
             return;
         }
 
-        // 5. Initialize the newly redesigned StreamingClient
+        // 4. Initialize the StreamingClient
         StreamingClient newClient = new StreamingClient(session, roomId, isCameraEnabled, isMicrophoneEnabled);
-         // Register new client
+        
+        // Register new client
         sessionRegistry.registerClient(newClient);
         boolean isSuccess = room.addMember(newClient);
-        if (!isSuccess) { session.close(); return; }
+        if (!isSuccess) { 
+            session.close(); 
+            return; 
+        }
 
-        // 1. SESSION_ID first
+        // 5. SESSION_ID first
         session.sendMessage(new TextMessage(
             objectMapper.writeValueAsString(Map.of("type", "SESSION_ID", "id", session.getId()))
         ));
 
-        // 2. Participant list to ALL — this renders cards on every client
+        // 6. Participant list to ALL — renders cards on every client
         List<ClientInfo> allClients = room.getAllClients().stream().map(ClientInfo::new).toList();
         broadcastSink.broadcastTextMessage("none", roomId,
             new TextMessage(objectMapper.writeValueAsString(allClients)));
 
-        // 3. Replay cached init segments to the new client ONLY
+        // 7. Replay cached init segments to the new client ONLY
         //    TCP ordering guarantees this arrives after the participant list above
         List<StreamingClient> existingCameras = room.getAllClients().stream()
             .filter(c -> !c.getId().equals(newClient.getId()))
@@ -132,7 +142,7 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
             log.info("[Handler] Sent restart signal to " + camera.getId() + " due to new joiner " + newClient.getId());
         }
     }
-// Remove scheduleStreamResetForClients — no longer needed
+    // Remove scheduleStreamResetForClients — no longer needed
     @Override
     public void handleTextMessage(WebSocketSession session, TextMessage message) {
         String payload = message.getPayload();

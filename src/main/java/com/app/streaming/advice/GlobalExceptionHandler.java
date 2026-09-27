@@ -1,25 +1,37 @@
 package com.app.streaming.advice;
 
-import org.springframework.http.HttpStatus;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.handler.annotation.support.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.context.request.WebRequest;
-
-import com.app.streaming.model.ErrorResponse;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
-    // @ExceptionHandler(IllegalArgumentException.class)
-    // public ResponseEntity<ErrorResponse> handleIllegalArgumentException(
-    //     IllegalArgumentException ex, WebRequest request
-    // ) {
-    //     ErrorResponse errorDetails = new ErrorResponse(
-    //         HttpStatus.CONFLICT.value(),
-    //         HttpStatus.CONFLICT.getReasonPhrase(),
-    //         ex.getMessage()
-    //     );
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ValidationErrorResponse> handleValidationErrors(
+            MethodArgumentNotValidException ex
+    ) {
+        Map<String, String> errors = new HashMap<>();
 
-    //     return new ResponseEntity<>(errorDetails, HttpStatus.CONFLICT);
-    // }
+        ex.getBindingResult()
+                .getFieldErrors()
+                .forEach(error ->
+                    errors.put(
+                        error.getField(),
+                        error.getDefaultMessage()
+                    )
+                );
+
+        return ResponseEntity
+                .badRequest()
+                .body(new ValidationErrorResponse(errors));
+    }
+
+    public record ValidationErrorResponse(
+        Map<String, String> errors
+    ) {}
 }
+

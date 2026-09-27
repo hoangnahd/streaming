@@ -178,19 +178,6 @@ export class ConnectionManager extends EventTarget {
     const payload = envelope.slice(8);
 
 
-    const bytes = new Uint8Array(payload);
-
-    const first4 = [...bytes.slice(0, 4)]
-        .map(b => b.toString(16).padStart(2, "0"))
-        .join(" ");
-
-    const isHeader =
-        bytes.length >= 4 &&
-        bytes[0] === 0x1a &&
-        bytes[1] === 0x45 &&
-        bytes[2] === 0xdf &&
-        bytes[3] === 0xa3;
-
     // console.log(
     //     `[Connection] recv ${isHeader ? "HEADER" : "MEDIA"} from ${senderId} first4=${first4}`
     // );

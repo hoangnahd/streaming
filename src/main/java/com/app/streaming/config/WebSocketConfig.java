@@ -12,15 +12,16 @@ import org.springframework.web.socket.server.standard.ServletServerContainerFact
 @Configuration
 public class WebSocketConfig implements WebSocketConfigurer {
     private final AdaptiveVideoBroadcastHandler handler;
+    
 
     public WebSocketConfig(AdaptiveVideoBroadcastHandler handler) {
         this.handler = handler;
     }
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry.addHandler(handler, "/stream/{roomId}")
+        registry.addHandler(handler, "/stream")
                 .addInterceptors(new AuthHandshakeInterceptor())
-                .setAllowedOrigins("https://localhost:8443");
+                .setAllowedOrigins("*");
     }
     @Bean
     public ServletServerContainerFactoryBean createWebSocketContainer() {
