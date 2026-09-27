@@ -55,9 +55,9 @@ export class RemoteStream {
           bytes[2]===0xdf &&
           bytes[3]===0xa3;
 
-      console.log(
-          `[Remote ${this.id}] ${isHeader ? "HEADER" : "MEDIA"} first4=${first4} size=${bytes.length}`
-      );
+      // console.log(
+      //     `[Remote ${this.id}] ${isHeader ? "HEADER" : "MEDIA"} first4=${first4} size=${bytes.length}`
+      // );
 
       if (isHeader) {
           this._handleHeader(frame);
@@ -111,7 +111,7 @@ export class RemoteStream {
   }
 
   _onSourceOpen() {
-      console.log(`[Remote ${this.id}] MediaSource OPEN`);
+      // console.log(`[Remote ${this.id}] MediaSource OPEN`);
 
       if (this.pendingInitSegment) {
           const { data, mimeType } = this.pendingInitSegment;
@@ -123,19 +123,19 @@ export class RemoteStream {
   }
 
   _createSourceBuffer(mimeType) {
-      console.log(`[Remote ${this.id}] Creating SourceBuffer: ${mimeType}`);
+      // console.log(`[Remote ${this.id}] Creating SourceBuffer: ${mimeType}`);
 
       this.sourceBuffer = this.mediaSource.addSourceBuffer(mimeType);
 
       this.sourceBuffer.addEventListener("updateend", () => {
-          console.log(
-              `[Remote ${this.id}] updateend buffered=${this.sourceBuffer.buffered.length}`
-          );
+          // console.log(
+          //     `[Remote ${this.id}] updateend buffered=${this.sourceBuffer.buffered.length}`
+          // );
           this._drainQueue();
       });
 
       this.sourceBuffer.addEventListener("error", (e) => {
-          console.error(`[Remote ${this.id}] SourceBuffer ERROR`, e);
+          // console.error(`[Remote ${this.id}] SourceBuffer ERROR`, e);
       });
 
       this.state = RemoteStreamState.STREAMING;
@@ -143,10 +143,10 @@ export class RemoteStream {
 
   _handleHeader(frame) {
     const mimeType = detectCodec(frame);
-    console.log(
-        `[Remote ${this.id}] append HEADER`,
-        frame.byteLength
-    );
+    // console.log(
+    //     `[Remote ${this.id}] append HEADER`,
+    //     frame.byteLength
+    // );
 
     if (this.sourceBuffer) {
       // Peer's encoder restarted mid-stream (fresh WebM init segment arrived
@@ -204,17 +204,17 @@ export class RemoteStream {
       }
 
       try {
-          const b = new Uint8Array(frame);
+          // const b = new Uint8Array(frame);
 
-          console.log(
-              `[Remote ${this.id}] appendBuffer`,
-              `${b[0].toString(16)} ${b[1].toString(16)} ${b[2].toString(16)} ${b[3].toString(16)}`,
-              frame.byteLength
-          );
+          // console.log(
+          //     `[Remote ${this.id}] appendBuffer`,
+          //     `${b[0].toString(16)} ${b[1].toString(16)} ${b[2].toString(16)} ${b[3].toString(16)}`,
+          //     frame.byteLength
+          // );
 
           this.sourceBuffer.appendBuffer(frame);
 
-          console.log(`[Remote ${this.id}] appendBuffer OK`);
+          // console.log(`[Remote ${this.id}] appendBuffer OK`);
 
           if (this.videoEl.paused) {
               this.videoEl.play().catch(() => {});
@@ -226,10 +226,10 @@ export class RemoteStream {
   }
 }
 
-function isWebMHeader(frame) {
-  const b = new Uint8Array(frame, 0, 4);
-  return b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3;
-}
+// function isWebMHeader(frame) {
+//   const b = new Uint8Array(frame, 0, 4);
+//   return b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3;
+// }
 
 function detectCodec(buffer) {
   const bytes = new Uint8Array(buffer);

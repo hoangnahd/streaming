@@ -9,11 +9,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import com.app.streaming.DTO.AccountDTO;
-import com.app.streaming.DTO.LoginDTO;
 import com.app.streaming.DTO.RegisterRequestDTO;
 import com.app.streaming.DTO.UpdateAccountRequest;
 import com.app.streaming.DTO.UpdatePasswordRequest;
-import com.app.streaming.DTO.UserResponseDTO;
 import com.app.streaming.model.User;
 import com.app.streaming.repository.UserRepository;
 
@@ -62,19 +60,6 @@ public class CustomUserDetailsService implements UserDetailsService {
         user.setPassword(encoder.encode(register.getPassword()));
 
         userRepository.save(user);
-    }
-
-    public UserResponseDTO authenticateUser(LoginDTO loginForm) {
-        System.out.println("Enter authenticate user");
-        User existingUser = userRepository.findByUsername(loginForm.getUsername())
-                .orElseThrow(() -> new IllegalArgumentException("User not found!!"));
-
-        // CORRECT WAY to verify a hashed password
-        if (!encoder.matches(loginForm.getPassword(), existingUser.getPassword())) {
-            throw new IllegalArgumentException("Password was not match!");
-        }
-
-        return new UserResponseDTO(existingUser.getUsername());
     }
 
     public List<AccountDTO> getAllAccounts() {

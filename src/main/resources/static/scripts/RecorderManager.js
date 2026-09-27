@@ -137,11 +137,11 @@ export class RecorderManager extends EventTarget {
       .map(b => b.toString(16).padStart(2, "0"))
       .join(" ");
       
-    console.log(
-        "[Recorder raw]",
-        bytes.length,
-        [...bytes.slice(0, 8)].map(b => b.toString(16).padStart(2, "0")).join(" ")
-    );
+    // console.log(
+    //     "[Recorder raw]",
+    //     bytes.length,
+    //     [...bytes.slice(0, 8)].map(b => b.toString(16).padStart(2, "0")).join(" ")
+    // );
 
     const isHeader =
         bytes.length >= 4 &&
@@ -150,9 +150,9 @@ export class RecorderManager extends EventTarget {
         bytes[2] === 0xdf &&
         bytes[3] === 0xa3;
 
-    console.log(
-        `[Recorder] sending ${isHeader ? "HEADER" : "MEDIA"} (${bytes.length} bytes) first4=${first4}`
-    );
+    // console.log(
+    //     `[Recorder] sending ${isHeader ? "HEADER" : "MEDIA"} (${bytes.length} bytes) first4=${first4}`
+    // );
 
     const cluster =
       bytes.length >= 4 &&
@@ -161,11 +161,11 @@ export class RecorderManager extends EventTarget {
       bytes[2] === 0xb6 &&
       bytes[3] === 0x75;
 
-    console.log(
-        "EBML =", isHeader,
-        "Cluster =", cluster,
-        "size =", bytes.length
-    );
+    // console.log(
+    //     "EBML =", isHeader,
+    //     "Cluster =", cluster,
+    //     "size =", bytes.length
+    // );
 
     if (this._waitingForInitHeader) {
         bytes = this._mergeInitHeader(bytes);
@@ -206,7 +206,7 @@ export class RecorderManager extends EventTarget {
             this._waitingForInitHeader = false;
             this._pendingInitHeader = new Uint8Array(0);
             
-            console.log("[Recorder] First initialization segment detected.");
+            // console.log("[Recorder] First initialization segment detected.");
             return header;
         }
     }

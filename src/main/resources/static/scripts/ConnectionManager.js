@@ -191,9 +191,9 @@ export class ConnectionManager extends EventTarget {
         bytes[2] === 0xdf &&
         bytes[3] === 0xa3;
 
-    console.log(
-        `[Connection] recv ${isHeader ? "HEADER" : "MEDIA"} from ${senderId} first4=${first4}`
-    );
+    // console.log(
+    //     `[Connection] recv ${isHeader ? "HEADER" : "MEDIA"} from ${senderId} first4=${first4}`
+    // );
 
     this.dispatchEvent(new CustomEvent('frame', { detail: { senderId, timestamp, payload } }));
   }

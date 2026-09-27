@@ -3,7 +3,7 @@ import { RecorderManager } from './RecorderManager.js';
 import { HardwareManager } from './HardwareManager.js';
 import { ParticipantManager } from './ParticipantManager.js';
 import { LayoutManager } from './LayoutManager.js';
-console.log("Succefully loaded main js")
+// console.log("Succefully loaded main js")
 /**
  * App
  * ---
