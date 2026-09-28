@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamSpace Live Room</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .btn-transition {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        /* Custom video mirroring for local participant */
+        .mirror-video {
+            transform: scaleX(-1);
+        }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-50 h-screen flex flex-col font-sans antialiased overflow-hidden">
+ 
+    <header class="border-b border-zinc-900 bg-zinc-900/40 backdrop-blur-md px-6 py-3 shrink-0 flex items-center justify-between z-10">
+        <div class="flex items-center gap-4">
+            <div class="flex items-center gap-2">
+                <span class="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <h1 class="text-sm font-semibold tracking-wide text-zinc-200">
+                    Room: <span class="font-mono text-zinc-400" id="roomIdDisplay">ROOM-ID-FALLBACK</span>
+                </h1>
+            </div>
+            <div class="h-4 w-px bg-zinc-800 hidden sm:block"></div>
+            <div class="text-xs text-zinc-500 hidden sm:flex items-center gap-2">
+                <i class="fa-solid fa-users text-zinc-400"></i>
+                <span id="participantCount">1 Participant Active</span>
+            </div>
+        </div>
+ 
+        <div class="flex items-center gap-3 text-xs">
+            <span id="netStatus" class="bg-zinc-900 border border-zinc-800 px-2.5 py-1 rounded-md font-medium text-zinc-400">
+                Pipeline: Connected
+            </span>
+            <span id="chunkCountBadge" class="bg-indigo-950/40 border border-indigo-900 text-indigo-400 px-2.5 py-1 rounded-md font-mono hidden sm:inline-block">
+                Packets: <span id="chunkCount">0</span>
+            </span>
+        </div>
+    </header>
+ 
+    <main class="flex-1 w-full p-4 md:p-6 flex flex-col justify-center items-center overflow-hidden relative">
+ 
+        <div id="participantsGrid" class="w-full h-full max-w-7xl transition-all duration-300 grid gap-4 items-center justify-center content-center grid-cols-1">
+ 
+            <div id="card-local" data-participant-id="local" class="btn-transition relative w-full h-full bg-zinc-900/50 border border-zinc-800/80 rounded-2xl overflow-hidden shadow-xl flex items-center justify-center cursor-pointer group hover:border-zinc-700">
+ 
+                <video id="localVideo" autoplay playsinline muted class="w-full h-full object-cover mirror-video hidden"></video>
+ 
+                <div id="avatar-local" class="flex flex-col items-center gap-4 transition-all duration-300">
+                    <div class="h-20 w-20 rounded-full bg-zinc-800/80 border border-zinc-700/50 flex items-center justify-center text-zinc-400 shadow-inner group-hover:scale-105 transition-transform">
+                        <i class="fa-solid fa-user text-3xl"></i>
+                    </div>
+                    <span class="text-xs font-medium tracking-wide text-zinc-500 bg-zinc-950 px-3 py-1 rounded-full border border-zinc-900">Your feed is muted</span>
+                </div>
+ 
+                <div class="absolute bottom-4 left-4 bg-zinc-950/80 backdrop-blur-md border border-zinc-800/60 px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-2 shadow-md">
+                    <span class="font-medium text-zinc-200">You (Host)</span>
+                    <div class="flex items-center gap-1 text-zinc-400">
+                        <i id="indicator-local-cam" class="fa-solid fa-video-slash text-red-400"></i>
+                        <i id="indicator-local-mic" class="fa-solid fa-microphone-slash text-red-400"></i>
+                    </div>
+                </div>
+            </div>
+ 
+        </div>
+    </main>
+ 
+    <footer class="border-t border-zinc-900 bg-zinc-950 px-6 py-4 shrink-0 flex items-center justify-center relative z-10">
+        <div class="flex items-center gap-4">
+ 
+            <button id="btnToggleCam" onclick="toggleLocalVideoTrack()" class="btn-transition h-12 w-12 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-400 flex items-center justify-center border border-red-500/20 cursor-pointer" title="Toggle Camera">
+                <i id="iconCam" class="fa-solid fa-video-slash text-base"></i>
+            </button>
+ 
+            <button id="btnToggleMic" onclick="toggleLocalAudioTrack()" class="btn-transition h-12 w-12 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-400 flex items-center justify-center border border-red-500/20 cursor-pointer" title="Toggle Microphone">
+                <i id="iconMic" class="fa-solid fa-microphone-slash text-base"></i>
+            </button>
+ 
+            <div class="h-6 w-px bg-zinc-800 mx-1"></div>
+ 
+            <button onclick="injectMockRemoteParticipant()" class="btn-transition h-12 px-4 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-medium text-zinc-400 flex items-center gap-2 cursor-pointer">
+                <i class="fa-solid fa-user-plus text-zinc-500"></i>
+                Simulate Join
+            </button>
+ 
+            <a id="leaveRoomLink" href="http://localhost:5500/dashboard" class="btn-transition h-12 px-5 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-950 text-sm font-semibold flex items-center gap-2 shadow-lg shadow-zinc-100/5">
+                <i class="fa-solid fa-phone-slash text-xs"></i>
+                Leave Room
+            </a>
+        </div>
+    </footer>
+ 
+    <script>
+        // ---------------------------------------------------------------
+        // roomId used to come from the server via th:text/th:inline. Now
+        // this page is static, so it's parsed straight from the URL that
+        // navigateToStream() (see streaming-dashboard.html) builds:
+        // .../room/{roomId}/stream?video=<bool>&mic=<bool>
+        // ---------------------------------------------------------------
+        (function () {
+            const params = new URLSearchParams(window.location.search);
+            const roomId = params.get('id');
+
+            window.__ROOM_CONFIG__ = {
+                roomId: roomId,
+                video: params.get('video') === 'true',
+                mic: params.get('mic') === 'true'
+            };
+
+            const roomIdDisplay = document.getElementById('roomIdDisplay');
+            if (roomIdDisplay) roomIdDisplay.textContent = roomId;
+        })();
+    </script>
+    <script type="module" src="/scripts/Main.js"></script>
+
+</body>
+</html>
