@@ -90,7 +90,7 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
         boolean isCameraEnabled = Boolean.parseBoolean(queryParams.getOrDefault("isCam", "false"));
         boolean isMicrophoneEnabled = Boolean.parseBoolean(queryParams.getOrDefault("isMic", "false"));
 
-        log.info("roomId: " + roomId + "\nisCam: " + isCameraEnabled + "\nisMic: " + isMicrophoneEnabled);
+        // log.info("roomId: " + roomId + "\nisCam: " + isCameraEnabled + "\nisMic: " + isMicrophoneEnabled);
 
         // Validate presence of required parameter
         if (roomId == null || roomId.isBlank()) {
@@ -182,8 +182,8 @@ public class AdaptiveVideoBroadcastHandler extends BinaryWebSocketHandler {
                 String jsonPayload = objectMapper.writeValueAsString(clients);
                 broadcastSink.broadcastTextMessage("none", roomId, new TextMessage(jsonPayload));
 
-                log.info("[Handler] Config updated for " + session.getId() 
-                    + " — video=" + video + " mic=" + mic);
+                // log.info("[Handler] Config updated for " + session.getId() 
+                //     + " — video=" + video + " mic=" + mic);
             }
         } catch (Exception e) {
             log.warning("[Handler] Failed to parse text message: " + payload);

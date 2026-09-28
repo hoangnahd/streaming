@@ -1,9 +1,9 @@
 name: Java CI/CD workflow
 on:
   push:
-    branches: ["master"]
+    branches: ["seperating_front_backend"]
   pull_request:
-    branches: ["master"]
+    branches: ["seperating_front_backend"]
 
 jobs:
   buid_and_push:
