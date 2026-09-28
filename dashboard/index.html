@@ -330,7 +330,7 @@
          * since both need to land on the same /room/{roomId}/stream destination.
          */
         function navigateToStream(targetRoomId) {
-            const url = new URL(window.location.origin + "/stream");
+            const url = new URL(window.location.origin + "/room");
             url.searchParams.set('id', targetRoomId);
             url.searchParams.set('video', isCamActive);
             url.searchParams.set('mic', isMicActive);
