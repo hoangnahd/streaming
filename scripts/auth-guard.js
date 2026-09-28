@@ -7,7 +7,7 @@
 // does. Include this file BEFORE each page's own <script> block.
 // ---------------------------------------------------------------------
 
-const AUTH_API_BASE = 'http://localhost:8080';
+// const AUTH_API_BASE = 'http://localhost:8080';
 const LOGIN_URL = `${window.location.origin}/index.html`;
 
 /**
@@ -19,7 +19,7 @@ const LOGIN_URL = `${window.location.origin}/index.html`;
  */
 async function requireAuth(requiredRole, forbiddenRedirect) {
     try {
-        const res = await fetch(AUTH_API_BASE + '/api/me', { credentials: 'include' });
+        const res = await fetch('/api/me', { credentials: 'include' });
         if (!res.ok) {
             window.location.href = LOGIN_URL;
             return null;

@@ -154,10 +154,10 @@
         // Config
         // ---------------------------------------------------------------
         // Absolute backend origin — this page may be served from a different
-        // dev-server origin than the Spring Boot app, so every API call and
-        // form action needs to point here explicitly rather than relatively.
-        const API_BASE = 'http://localhost:8080';
-        const createRoomEndpoint = API_BASE + '/api/room';
+        // // dev-server origin than the Spring Boot app, so every API call and
+        // // form action needs to point here explicitly rather than relatively.
+        // const API_BASE = 'http://localhost:8080';
+        const createRoomEndpoint = '/api/room';
 
         // Send the session cookie on every request, since this page may be
         // cross-origin from the backend (see manage-accounts.html for the
@@ -405,7 +405,7 @@
             console.log("Loading user profile via session...");
 
             try {
-                const response = await fetch(API_BASE + '/api/me', {
+                const response = await fetch('/api/me', {
                     method: 'GET',
                     headers: {
                         'Content-Type': 'application/json'

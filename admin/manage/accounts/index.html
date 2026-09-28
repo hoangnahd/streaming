@@ -307,7 +307,7 @@
             // ---------------------------------------------------------
             // Config
             // ---------------------------------------------------------
-            const API_BASE = 'http://localhost:8080/api/admin';
+            // const API_BASE = 'http://localhost:8080/api/admin';
 
             // Merge fetch options with credentials so the session cookie is
             // sent even when this page is served from a different origin
@@ -567,8 +567,8 @@
             async function loadAccounts() {
                 tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-12 text-center text-sm text-slate-400">Loading accounts…</td></tr>';
                 try {
-                    const res = await apiFetch(API_BASE + '/accounts', { headers: jsonHeaders() });
-                    if (!res.ok) throw new Error('Request to ' + API_BASE + '/accounts failed with status ' + res.status);
+                    const res = await apiFetch('/accounts', { headers: jsonHeaders() });
+                    if (!res.ok) throw new Error('Request to ' + '/accounts failed with status ' + res.status);
                     const data = await res.json();
                     renderAccounts(data);
                 } catch (err) {
@@ -640,7 +640,7 @@
                 setBtnLoading(addSaveBtn, true, 'Saving...');
                 addPanel.classList.add('is-loading');
                 try {
-                    const res = await apiFetch(API_BASE + '/register', {
+                    const res = await apiFetch('/register', {
                         method: 'POST',
                         headers: jsonHeaders(),
                         body: JSON.stringify({ username: username, password: password, confirmedPassword: confirmedPassword })
@@ -757,7 +757,7 @@
                 editPanel.classList.add('is-loading');
                 setBtnLoading(editSaveBtn, true, 'Saving...');
                 try {
-                    const res = await apiFetch(API_BASE + '/accounts/' + encodeURIComponent(editIdHidden.value), {
+                    const res = await apiFetch('/accounts/' + encodeURIComponent(editIdHidden.value), {
                         method: 'PUT',
                         headers: jsonHeaders(),
                         body: JSON.stringify({ username: username, role: role })
@@ -871,7 +871,7 @@
                 if (p.saveIcon) p.saveIcon.classList.add('hidden');
                 if (p.saveSpin) p.saveSpin.classList.remove('hidden');
                 try {
-                    const res = await apiFetch(API_BASE + '/accounts/' + encodeURIComponent(p.id) + '/password', {
+                    const res = await apiFetch('/accounts/' + encodeURIComponent(p.id) + '/password', {
                         method: 'POST',
                         headers: jsonHeaders(),
                         body: JSON.stringify({ password: p.input.value })
@@ -907,7 +907,7 @@
                 row.style.opacity = '0.5';
                 row.style.pointerEvents = 'none';
                 try {
-                    const res = await apiFetch(API_BASE + '/accounts/' + encodeURIComponent(id), {
+                    const res = await apiFetch('/accounts/' + encodeURIComponent(id), {
                         method: 'DELETE',
                         headers: jsonHeaders()
                     });
