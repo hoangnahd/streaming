@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------
 
 const AUTH_API_BASE = 'http://localhost:8080';
-const LOGIN_URL = 'http://localhost:5500/index.html';
+const LOGIN_URL = `${window.location.origin}/index.html`;
 
 /**
  * Calls GET /api/me. Redirects to LOGIN_URL if there's no valid session,

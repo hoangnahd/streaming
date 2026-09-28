@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sign In · Streaming Application</title>
+    <title>Streaming Application</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @keyframes fade-in-up {
@@ -85,6 +85,7 @@
     </div>
 
     <script>
+        server_base_url = "http://localhost:8080"
         // Check for standard server-side redirects with error flags
         if (new URLSearchParams(window.location.search).has("error")) {
             document.getElementById("securityError").classList.remove("hidden");
@@ -101,7 +102,7 @@
             errorBanner.classList.add("hidden");
 
             try {
-                const response = await fetch("http://localhost:8080/login", {
+                const response = await fetch(server_base_url + "/login", {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/x-www-form-urlencoded"
