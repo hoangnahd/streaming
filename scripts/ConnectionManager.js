@@ -81,9 +81,9 @@ export class ConnectionManager extends EventTarget {
   _openSocket() {
     this._setState(this._reconnectAttempt > 0 ? ConnectionState.RECONNECTING : ConnectionState.CONNECTING);
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const { video, mic } = this.getParams();
-    const url = `${protocol}//localhost:8080/stream?roomId=${encodeURIComponent(this.roomId)}&video=${video}&mic=${mic}`;
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const url = `${protocol}//${location.host}/stream?roomId=${encodeURIComponent(this.roomId)}&video=${video}&mic=${mic}`;
 
     const socket = new WebSocket(url);
     socket.binaryType = 'arraybuffer';
